@@ -1,0 +1,1455 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>PCIe 拓撲檢查器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* 版面：頂部三個輸入卡 → 判定列與計數卡 → 分頁（槽位圖為主視圖）；以「硬體槽位晶片」呈現，其餘保持安靜 */
+:root{
+  --bg:#eceff2; --panel:#f8fafb; --panel2:#eef2f5; --line:#cdd5dc; --ink:#16212b; --mute:#5a6977;
+  --accent:#2c52d4; --accent-soft:#dde5fa;
+  --ok:#157a3b; --ok-bg:#ddf2e5; --warn:#9a5b06; --warn-bg:#fbefd2; --bad:#c0283c; --bad-bg:#fbe1e5;
+  --f-body:'IBM Plex Sans','Noto Sans TC','PingFang TC','Microsoft JhengHei',system-ui,sans-serif;
+  --f-cond:'IBM Plex Sans Condensed','Noto Sans TC','PingFang TC','Microsoft JhengHei',system-ui,sans-serif;
+  --f-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e141a; --panel:#151d25; --panel2:#1b252f; --line:#2b3844; --ink:#e3eaf0; --mute:#8fa0af;
+    --accent:#8ea7ff; --accent-soft:#1e2a52;
+    --ok:#5ccb8c; --ok-bg:#12301f; --warn:#e9b24c; --warn-bg:#3a2b0d; --bad:#ff7c8d; --bad-bg:#3b161e; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e141a; --panel:#151d25; --panel2:#1b252f; --line:#2b3844; --ink:#e3eaf0; --mute:#8fa0af;
+  --accent:#8ea7ff; --accent-soft:#1e2a52;
+  --ok:#5ccb8c; --ok-bg:#12301f; --warn:#e9b24c; --warn-bg:#3a2b0d; --bad:#ff7c8d; --bad-bg:#3b161e; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:14px/1.55 var(--f-body);padding-block:20px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1260px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.mono{font-family:var(--f-mono);font-size:.92em;font-variant-numeric:tabular-nums}
+.dim{color:var(--mute)}
+.ic{width:1.15em;height:1.15em;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.2em;flex:none}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header.top{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+header.top h1{margin:0;font:600 26px/1.15 var(--f-cond);letter-spacing:.01em;text-wrap:balance}
+header.top p{margin:4px 0 0;color:var(--mute);max-width:62ch}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 12px;border-radius:5px;display:inline-flex;gap:6px;align-items:center;min-height:34px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.primary{color:#0e141a}}
+:root[data-theme="dark"] .btn.primary{color:#0e141a}
+.btn.sm{padding:3px 9px;min-height:28px;font-size:13px}
+
+.inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}
+.drop{background:var(--panel);border:1px dashed var(--line);border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop.has{border-style:solid}
+.drop h3{margin:0;font:600 13px/1.2 var(--f-cond);letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.drop code{font-family:var(--f-mono);font-size:12px;background:var(--panel2);padding:2px 6px;border-radius:3px;overflow-wrap:anywhere}
+.drop .st{display:flex;gap:6px;align-items:center;min-height:22px;overflow-wrap:anywhere}
+.drop .st.ok{color:var(--ok)} .drop .st.bad{color:var(--bad)} .drop .st.warn{color:var(--warn)}
+.drop details summary{cursor:pointer;color:var(--accent);font-size:13px}
+.drop textarea{width:100%;min-height:92px;margin-top:6px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px;font:12px/1.4 var(--f-mono);resize:vertical}
+.drop .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+.verdict{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.vhead{display:flex;gap:10px 14px;align-items:center;flex-wrap:wrap}
+.vtitle{font:600 20px/1.2 var(--f-cond);display:flex;gap:8px;align-items:center}
+.vtitle.ok{color:var(--ok)} .vtitle.warn{color:var(--warn)} .vtitle.bad{color:var(--bad)} .vtitle.none{color:var(--mute)}
+.tag{font:500 12px/1 var(--f-cond);letter-spacing:.04em;padding:4px 7px;border-radius:3px;background:var(--panel2);border:1px solid var(--line);color:var(--mute)}
+.tag.bad{background:var(--bad-bg);color:var(--bad);border-color:transparent}
+.tag.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.tag.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+.counts{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
+.cnt{border:1px solid var(--line);border-radius:5px;padding:8px 10px;background:var(--panel2);display:flex;flex-direction:column;gap:2px;position:relative;min-width:0}
+.cnt .l{font:600 12px/1.2 var(--f-cond);letter-spacing:.06em;text-transform:uppercase;color:var(--mute);display:flex;gap:5px;align-items:center}
+.cnt .n{font:500 28px/1.1 var(--f-mono);font-variant-numeric:tabular-nums}
+.cnt .e{font-size:12px;color:var(--mute)}
+.cnt .s{position:absolute;top:8px;right:8px}
+.cnt.ok .s{color:var(--ok)} .cnt.warn{background:var(--warn-bg);border-color:var(--warn)} .cnt.warn .s,.cnt.warn .n{color:var(--warn)}
+.cnt.bad{background:var(--bad-bg);border-color:var(--bad)} .cnt.bad .s,.cnt.bad .n{color:var(--bad)}
+.note{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-radius:5px;background:var(--accent-soft);font-size:13px;flex-wrap:wrap}
+.note.warn{background:var(--warn-bg)}
+
+nav.tabs{display:flex;gap:2px;overflow-x:auto;border-bottom:1px solid var(--line);scrollbar-width:thin}
+nav.tabs button{border:0;background:none;padding:9px 14px;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--mute);font-weight:500;display:flex;gap:6px;align-items:center}
+nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+nav.tabs .badge{font:500 11px/1 var(--f-mono);background:var(--bad);color:#fff;border-radius:9px;padding:2px 6px}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) nav.tabs .badge{color:#0e141a}}
+:root[data-theme="dark"] nav.tabs .badge{color:#0e141a}
+.panelx{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--mute);font-size:13px;align-items:center}
+.legend span{display:inline-flex;gap:5px;align-items:center}
+.sv-ok{color:var(--ok)} .sv-warn{color:var(--warn)} .sv-bad{color:var(--bad)} .sv-none{color:var(--mute)}
+
+.cpu{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.cpu-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:10px 14px;background:var(--panel2);border-bottom:1px solid var(--line)}
+.cpu-h .nm{font:600 18px/1 var(--f-cond);display:flex;gap:7px;align-items:center}
+.cpu-h .meta{display:flex;gap:6px;flex-wrap:wrap;color:var(--mute);font-size:12.5px}
+.cpu-b{padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:12px}
+.grp{border:1px solid var(--line);border-radius:5px;background:var(--bg);display:flex;flex-direction:column;min-width:0}
+.grp-h{display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px}
+.grp-h b{font:600 13px/1 var(--f-cond);letter-spacing:.03em}
+.grp-h .sp{flex:1}
+.chips{padding:8px;display:flex;flex-direction:column;gap:6px}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:4px;min-width:0}
+.chip>summary,.chip.flat{list-style:none;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:7px 9px;cursor:pointer}
+.chip>summary::-webkit-details-marker{display:none}
+.chip .ct{font-weight:500;overflow-wrap:anywhere;line-height:1.3}
+.chip .cs{color:var(--mute);font-size:12px;overflow-wrap:anywhere}
+.chip .cr{font-size:12.5px;margin-top:2px}
+.chip.warn{background:var(--warn-bg);border-color:var(--warn)} .chip.bad{background:var(--bad-bg);border-color:var(--bad)}
+.chip.missing,.chip.empty{border-style:dashed}
+.chip.empty:not(.bad){background:transparent;color:var(--mute)}
+.chip.flat{cursor:default}
+.chip .det{padding:8px 10px 10px;border-top:1px dashed var(--line);display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12.5px}
+.chip .det dt{color:var(--mute)} .chip .det dd{margin:0;overflow-wrap:anywhere}
+.lk{font:500 12px/1 var(--f-mono);padding:4px 6px;border-radius:3px;border:1px solid var(--line);background:var(--panel2);white-space:nowrap;display:inline-flex;gap:4px;align-items:center}
+.lk.ok{color:var(--ok);background:var(--ok-bg);border-color:transparent} .lk.warn{color:var(--warn);background:var(--warn-bg);border-color:transparent}
+.lk.bad{color:var(--bad);background:var(--bad-bg);border-color:transparent} .lk.lim{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+.ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ctrls select,.ctrls input[type=text]{border:1px solid var(--line);background:var(--panel);border-radius:4px;padding:5px 8px;min-height:32px}
+.ctrls label{display:inline-flex;gap:6px;align-items:center;color:var(--mute)}
+
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{font:600 12px/1.2 var(--f-cond);letter-spacing:.05em;text-transform:uppercase;color:var(--mute);text-align:left;padding:8px 10px;background:var(--panel2);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.bad{background:var(--bad-bg)} tr.warn{background:var(--warn-bg)}
+.hops{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.hop{display:inline-flex;gap:5px;align-items:center;border:1px solid var(--line);background:var(--panel2);border-radius:3px;padding:2px 6px;font-size:12px;white-space:nowrap}
+.hop i{font:500 10.5px/1 var(--f-cond);font-style:normal;color:var(--mute);letter-spacing:.04em;text-transform:uppercase}
+.hop.cpu{background:var(--accent-soft);border-color:transparent}
+.hop.warn{background:var(--warn-bg);border-color:var(--warn)} .hop.bad{background:var(--bad-bg);border-color:var(--bad)} .hop.miss{border-style:dashed}
+.arrow{color:var(--mute);font-size:12px}
+.pctbar{display:inline-block;width:54px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;vertical-align:middle;margin-right:6px}
+.pctbar b{display:block;height:100%;background:var(--ok)} .pctbar.warn b{background:var(--warn)} .pctbar.bad b{background:var(--bad)}
+
+.issue{display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:start}
+.issue:last-child{border-bottom:0}
+.issue .t{font-weight:600;overflow-wrap:anywhere} .issue .d{color:var(--mute);font-size:13px;margin-top:2px;overflow-wrap:anywhere}
+.issue.bad .ic:first-child{color:var(--bad)} .issue.warn .ic:first-child{color:var(--warn)} .issue.info .ic:first-child{color:var(--accent)}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.empty-state{padding:26px 16px;text-align:center;color:var(--mute)}
+
+.tcpu{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.tcpu-h{display:flex;gap:8px;align-items:center;font:600 15px/1 var(--f-cond)}
+.troot-h{color:var(--mute);font-size:12px;margin:4px 0 2px}
+.tnode,.tleaf{margin:0}
+.tnode>summary{list-style:none;cursor:pointer}
+.tnode>summary::-webkit-details-marker{display:none}
+.tkids{margin-left:11px;padding-left:12px;border-left:1px solid var(--line)}
+.tn{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 6px;border-radius:3px;max-width:100%}
+.tn.warn{background:var(--warn-bg)} .tn.bad{background:var(--bad-bg)}
+.tn .rl{font:500 11px/1 var(--f-cond);letter-spacing:.04em;text-transform:uppercase;color:var(--mute)}
+.tn .nm{overflow-wrap:anywhere}
+.tn.miss{border:1px dashed var(--bad);color:var(--bad);background:var(--bad-bg)}
+.tn.ep{border:1px dashed var(--line);color:var(--mute)}
+
+.schema td:first-child{font-family:var(--f-mono);font-size:12.5px;white-space:nowrap}
+.cfgbox{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.cfgbox textarea{width:100%;min-height:340px;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:10px;font:12.5px/1.5 var(--f-mono);resize:vertical;tab-size:2}
+pre.cmd{margin:0;background:var(--panel2);padding:8px 10px;border-radius:4px;overflow-x:auto;font:12.5px/1.5 var(--f-mono)}
+.msgs{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.msgs .e{color:var(--bad)} .msgs .w{color:var(--warn)} .msgs .o{color:var(--ok)}
+h2.sec{margin:6px 0 0;font:600 16px/1.2 var(--f-cond);letter-spacing:.02em}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:5px;font-size:13px;z-index:20;max-width:90vw}
+.toast[hidden]{display:none}
+@media (max-width:560px){.issue{grid-template-columns:auto 1fr}.issue .cat{grid-column:2}}
+@media (prefers-reduced-motion:no-preference){.chip,.btn{transition:border-color .12s}}
+
+/* BDF 查詢 */
+.bdfq{position:relative;display:inline-flex;align-items:center}
+.bdfq .ic{position:absolute;left:9px;color:var(--mute);pointer-events:none}
+.bdfq input{border:1px solid var(--line);background:var(--panel);border-radius:5px;padding:5px 10px 5px 30px;min-height:34px;width:250px;max-width:100%;font:13px var(--f-mono)}
+.bdfq input:focus{border-color:var(--accent)}
+.bres{background:var(--panel);border:1px solid var(--line);border-radius:6px;min-width:0}
+.bres.bad{border-left:3px solid var(--bad)} .bres.warn{border-left:3px solid var(--warn)}
+.bres>summary{list-style:none;cursor:pointer;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:10px 12px}
+.bres>summary::-webkit-details-marker{display:none}
+.bres>summary .sp{flex:1}
+.bres .bd{padding:12px 14px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line);min-width:0}
+.bres dl.kv{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 16px}
+.bres dl.kv dt{color:var(--mute)} .bres dl.kv dd{margin:0;overflow-wrap:anywhere}
+.bres h4{margin:0 0 4px;font:600 12px/1.2 var(--f-cond);letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.bres pre.raw{margin:0;background:var(--panel2);padding:10px 12px;border-radius:4px;overflow:auto;max-height:460px;font:12px/1.45 var(--f-mono);white-space:pre;tab-size:8}
+.bres details.rawbox>summary{cursor:pointer;color:var(--accent);font-size:13px;margin-bottom:6px}
+.hopq{cursor:pointer} .hopq:hover{border-color:var(--accent)}
+.qlink{cursor:pointer;color:var(--accent);border-bottom:1px dotted var(--accent);font-family:var(--f-mono);font-size:.92em;background:none;border-top:0;border-left:0;border-right:0;padding:0}
+.bsum{color:var(--mute)}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx=".8"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></symbol>
+  <symbol id="i-gpu" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="10.5" rx="1.6"/><circle cx="8.5" cy="11.2" r="2.6"/><circle cx="15.5" cy="11.2" r="2.6"/><path d="M5 16.5V19M9 16.5V19M13 16.5V19M17 16.5V19M2 9H.8"/></symbol>
+  <symbol id="i-switch" viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6 12h.01M10 12h.01M14 12h.01M18 12h.01M12 8V4.5M9 6.5l3-2.5 3 2.5M12 16v3.5M9 17.5l3 2.5 3-2.5"/></symbol>
+  <symbol id="i-nic" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="1.5"/><path d="M8 17v2.5h8V17M8.5 9v4M11 9v4M13.5 9v4M16 9v4"/></symbol>
+  <symbol id="i-nvme" viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1.2"/><path d="M2 10.5h2.2v3H2M8 11h3v2H8M13.5 11h3v2h-3"/></symbol>
+  <symbol id="i-disk" viewBox="0 0 24 24"><ellipse cx="12" cy="6.5" rx="7.5" ry="3"/><path d="M4.5 6.5v11c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-11M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/></symbol>
+  <symbol id="i-port" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 7V4.5M12 7V4.5M17 7V4.5M7 17v2.5M17 17v2.5"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16.5V20"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/><path d="M9 9h6v6H9z"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.3l2.6 2.6L16 9.4"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.4h.01"/></symbol>
+  <symbol id="i-bad" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.7 8.7l6.6 6.6M15.3 8.7l-6.6 6.6"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.8h.01"/></symbol>
+  <symbol id="i-empty" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+</svg>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>PCIe 拓撲檢查器</h1>
+      <p>讀入 <span class="mono">lspci -vvv</span>、<span class="mono">lspci -tv</span> 與設定檔，列出 CPU 到各裝置的 BDF 路徑，檢查裝置數量、Link 速度/寬度、降速降寬與缺少的裝置，並可用 BDF 查詢任一裝置的完整內容。所有分析都在本頁完成，檔案不會上傳。</p>
+    </div>
+    <div class="actions">
+      <label class="bdfq"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="bdfQuick" type="search" placeholder="搜尋 BDF，如 1a:00.0（按 / 聚焦）" autocomplete="off" spellcheck="false" aria-label="搜尋 BDF"></label>
+      <button class="btn" id="btnSample" type="button"><svg class="ic"><use href="#i-file"/></svg>載入範例</button>
+      <button class="btn" id="btnClear" type="button">清除</button>
+    </div>
+  </header>
+
+  <section class="inputs" id="inputs" aria-label="載入檔案">
+    <div class="drop" data-slot="vvv">
+      <h3>① lspci -vvv</h3>
+      <code>sudo lspci -nnvvv &gt; lspci_vvv.txt</code>
+      <div class="st" id="st-vvv"></div>
+      <div class="row"><label class="btn sm"><input type="file" id="f-vvv" hidden multiple>選擇檔案</label></div>
+      <details><summary>改用貼上文字</summary><textarea id="ta-vvv" spellcheck="false" placeholder="貼上 lspci -vvv 輸出"></textarea><button class="btn sm" type="button" data-apply="vvv">套用</button></details>
+    </div>
+    <div class="drop" data-slot="tree">
+      <h3>② lspci -tv</h3>
+      <code>lspci -tv &gt; lspci_tv.txt</code>
+      <div class="st" id="st-tree"></div>
+      <div class="row"><label class="btn sm"><input type="file" id="f-tree" hidden multiple>選擇檔案</label></div>
+      <details><summary>改用貼上文字</summary><textarea id="ta-tree" spellcheck="false" placeholder="貼上 lspci -tv 輸出"></textarea><button class="btn sm" type="button" data-apply="tree">套用</button></details>
+    </div>
+    <div class="drop" data-slot="cfg">
+      <h3>③ 設定檔 JSON（選填）</h3>
+      <code>pcie-topology-config/1</code>
+      <div class="st" id="st-cfg"></div>
+      <div class="row"><label class="btn sm"><input type="file" id="f-cfg" hidden multiple>選擇檔案</label><button class="btn sm" type="button" id="btnToJson">管理設定檔</button></div>
+    </div>
+  </section>
+  <div class="dim" style="font-size:12.5px;margin-top:-6px">三個檔案可直接拖進頁面，會依內容自動分辨。加 <span class="mono">-nn</span> 才有 vendor:device ID 可與設定檔比對型號；沒有 root 權限時 lspci 讀不到 LnkCap / LnkSta。</div>
+
+  <section class="verdict" id="verdict" aria-live="polite"></section>
+
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="slots">槽位圖</button>
+    <button role="tab" data-tab="issues">問題與比對 <span class="badge" id="issueBadge" hidden></span></button>
+    <button role="tab" data-tab="paths">CPU → 裝置路徑</button>
+    <button role="tab" data-tab="links">Link 狀態</button>
+    <button role="tab" data-tab="tree">拓撲樹</button>
+    <button role="tab" data-tab="bdf">BDF 查詢</button>
+    <button role="tab" data-tab="json">JSON 設定檔</button>
+  </nav>
+
+  <div id="panels">
+    <section class="panelx" data-panel="slots"></section>
+    <section class="panelx" data-panel="issues" hidden></section>
+    <section class="panelx" data-panel="paths" hidden></section>
+    <section class="panelx" data-panel="links" hidden></section>
+    <section class="panelx" data-panel="tree" hidden></section>
+    <section class="panelx" data-panel="bdf" hidden></section>
+    <section class="panelx" data-panel="json" hidden></section>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+'use strict';
+/* ===== PCIe 拓撲檢查器 核心：解析 / 分析 / 範例 ===== */
+const PCIE = (function () {
+  const GEN = { 2.5: 1, 5: 2, 8: 3, 16: 4, 32: 5, 64: 6 };
+  const GEN_GTS = { 1: 2.5, 2: 5, 3: 8, 4: 16, 5: 32, 6: 64 };
+  const LANE_GBPS = { 1: 0.25, 2: 0.5, 3: 0.985, 4: 1.969, 5: 3.938, 6: 7.563 }; // GB/s / lane / 單向
+  const genOf = (g) => (g == null ? null : GEN[g] != null ? GEN[g] : null);
+  const bwOf = (g, w) => { const n = genOf(g); return n && w != null ? LANE_GBPS[n] * w : null; };
+  const hex2 = (n) => Number(n).toString(16).padStart(2, '0');
+
+  const ROLE_LABEL = {
+    gpu: 'GPU', nic: 'NIC', nvme: 'NVMe', storage: '儲存控制器', nvswitch: 'NVSwitch', pcie_switch: 'PCIe Switch',
+    switch_up: 'Switch 上游埠', switch_down: 'Switch 下游埠', root_port: 'Root Port', host_bridge: 'Host Bridge',
+    bmc_vga: 'BMC VGA', bridge: 'PCI Bridge', other: '其他', cpu: 'CPU'
+  };
+  const COUNT_ROLES = ['cpu', 'gpu', 'pcie_switch', 'nic', 'nvme', 'storage', 'nvswitch'];
+  const ENDPOINT_ROLES = ['gpu', 'nic', 'nvme', 'storage', 'nvswitch'];
+  const CFG_ROLES = ['gpu', 'nic', 'nvme', 'storage', 'nvswitch', 'pcie_switch', 'bmc_vga', 'other'];
+
+  function normBdf(s) {
+    if (!s) return null;
+    s = String(s).trim().toLowerCase();
+    const m = s.match(/^(?:([0-9a-f]{1,4}):)?([0-9a-f]{1,2}):([0-9a-f]{1,2})\.([0-7])$/);
+    if (!m) return null;
+    return (m[1] || '0').padStart(4, '0') + ':' + m[2].padStart(2, '0') + ':' + m[3].padStart(2, '0') + '.' + m[4];
+  }
+  const rootKeyOf = (bdf) => bdf.slice(0, 7);
+
+  /* ---------- lspci -vvv ---------- */
+  function parseLnk(s) {
+    const sp = s.match(/Speed\s+([\d.]+)\s*GT\/s(?:\s*\(([a-z]+)\))?/i);
+    const wd = s.match(/Width\s+x(\d+)(?:\s*\(([a-z]+)\))?/i);
+    const dl = s.match(/DLActive([+-])/);
+    const tr = s.match(/\bTrain([+-])/);
+    return {
+      gts: sp ? parseFloat(sp[1]) : null, speedFlag: (sp && sp[2]) || null,
+      width: wd ? parseInt(wd[1], 10) : null, widthFlag: (wd && wd[2]) || null,
+      dlActive: dl ? dl[1] === '+' : null, train: tr ? tr[1] === '+' : null
+    };
+  }
+
+  function classify(d) {
+    const c = (d.cls || '').toLowerCase(), t = d.expType, v = d.vendorId, n = (d.name || '').toLowerCase();
+    if (c.includes('host bridge')) return 'host_bridge';
+    if (t === 'Upstream Port') return 'switch_up';
+    if (t === 'Downstream Port') return 'switch_down';
+    if (t === 'Root Port') return 'root_port';
+    if (/3d controller|display controller|processing accelerators/.test(c)) return 'gpu';
+    if (/vga compatible/.test(c)) return (v === '1a03' || v === '102b' || /aspeed|matrox/.test(n)) ? 'bmc_vga' : 'gpu';
+    if (/non-volatile memory/.test(c)) return 'nvme';
+    if (/ethernet controller|network controller|infiniband/.test(c)) return 'nic';
+    if (/raid bus|serial attached scsi|sata controller|scsi storage|mass storage|sas/.test(c)) return 'storage';
+    if (c === 'bridge' && v === '10de') return 'nvswitch';
+    if (/pci bridge/.test(c)) return 'bridge';
+    return 'other';
+  }
+
+  function parseVVV(text) {
+    const devs = []; let cur = null, cap = null, denied = 0, lastKey = null;
+    for (const raw of text.replace(/\r/g, '').split('\n')) {
+      if (!raw.trim()) { cur = null; cap = null; lastKey = null; continue; }
+      if (!/^\s/.test(raw)) {
+        const m = raw.match(/^((?:[0-9a-fA-F]{4}:)?[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7])\s+(.*)$/);
+        if (!m) { cur = null; cap = null; continue; }
+        const hm = m[2].match(/^(.*?):\s+(.*)$/);
+        const clsRaw = hm ? hm[1] : m[2];
+        let rest = hm ? hm[2] : '';
+        const code = (clsRaw.match(/\[([0-9a-f]{4})\]\s*$/i) || [])[1] || null;
+        const cls = clsRaw.replace(/\s*\[[0-9a-f]{4}\]\s*$/i, '').trim();
+        let vendorId = null, deviceId = null;
+        const idm = rest.match(/\[([0-9a-f]{4}):([0-9a-f]{4})\](?:\s*\(rev [0-9a-f]+\))?(?:\s*\(prog-if[^)]*\))?\s*$/i);
+        if (idm) { vendorId = idm[1].toLowerCase(); deviceId = idm[2].toLowerCase(); rest = rest.slice(0, idm.index); }
+        else rest = rest.replace(/\s*\(prog-if[^)]*\)\s*$/i, '').replace(/\s*\(rev [0-9a-f]+\)\s*$/i, '');
+        cur = { bdf: normBdf(m[1]), cls, classCode: code, name: rest.trim(), vendorId, deviceId, expType: null, hasExpress: false, src: 'vvv', raw: [raw] };
+        devs.push(cur); cap = null; continue;
+      }
+      if (!cur) continue;
+      cur.raw.push(raw);
+      const line = raw.trim(); let x;
+      if ((x = line.match(/^Capabilities:\s*\[[0-9a-f]+(?:\s+v\d+)?\]\s*(.*)$/i))) {
+        const t = x[1]; lastKey = null;
+        if (/^Express/i.test(t)) {
+          cap = 'express';
+          const tm = t.match(/Express\s*\(v\d+\)\s*([A-Za-z\-\/ ]+?)\s*(?:\(|,|$)/);
+          cur.expType = tm ? tm[1].trim() : 'Endpoint'; cur.hasExpress = true;
+        } else if (/Advanced Error Reporting/i.test(t)) cap = 'aer';
+        else cap = 'other';
+        continue;
+      }
+      if (/^Capabilities:\s*<access denied>/i.test(line)) { cur.denied = true; denied++; continue; }
+      if ((x = line.match(/^Bus:\s*primary=([0-9a-f]+),\s*secondary=([0-9a-f]+),\s*subordinate=([0-9a-f]+)/i))) {
+        cur.sec = parseInt(x[2], 16); cur.sub = parseInt(x[3], 16); continue;
+      }
+      if ((x = line.match(/^NUMA node:\s*(\d+)/i))) { cur.numa = +x[1]; continue; }
+      if ((x = line.match(/^Physical Slot:\s*(.+)/i))) { cur.slot = x[1].trim(); continue; }
+      if ((x = line.match(/^Kernel driver in use:\s*(.+)/i))) { cur.driver = x[1].trim(); continue; }
+      if (cap === 'express') {
+        const key = (line.match(/^([A-Za-z0-9]+):/) || [])[1];
+        if (key) lastKey = key;
+        if (key === 'LnkCap') cur.cap = parseLnk(line);
+        else if (key === 'LnkSta') { cur._staTxt = line; cur.sta = parseLnk(line); }
+        else if (!key && lastKey === 'LnkSta') { cur._staTxt += ' ' + line; cur.sta = parseLnk(cur._staTxt); } // DLActive 等旗標在下一行
+        else if (key === 'SltSta' && (x = line.match(/PresDet([+-])/))) cur.presDet = x[1] === '+';
+        else if (key === 'LnkCtl2' && (x = line.match(/Target Link Speed:\s*([\d.]+)GT\/s/i))) cur.targetGts = parseFloat(x[1]);
+      } else if (cap === 'aer') {
+        if (/^UESta:/.test(line)) cur.aerUE = (line.match(/\b\w+(?=\+)/g) || []);
+        else if (/^CESta:/.test(line)) cur.aerCE = (line.match(/\b\w+(?=\+)/g) || []);
+      }
+    }
+    devs.forEach((d) => { d.role = classify(d); d.raw = d.raw.join('\n'); });
+    return { devs, denied };
+  }
+
+  /* ---------- lspci -tv ---------- */
+  function parseTree(text) {
+    const PSEUDO = { type: 'pseudo' };
+    const branch = {}; const nodes = []; const roots = [];
+    for (const line of text.replace(/\r/g, '').split('\n')) {
+      if (!line.trim()) continue;
+      const re = /\[([0-9a-f]{4}):([0-9a-f]{2})\]|\[([0-9a-f]{2})(?:-([0-9a-f]{2}))?\]|([0-9a-f]{2}\.[0-7])/gi;
+      let cur = null, lastEnd = 0, m;
+      while ((m = re.exec(line))) {
+        const gap = line.slice(lastEnd, m.index);
+        let ci = -1;
+        for (let i = gap.length - 1; i >= 0; i--) { if (gap[i] === '+' || gap[i] === '\\') { ci = i; break; } }
+        const connAbs = ci >= 0 ? lastEnd + ci : -1;
+        const isBracketBus = m[3] !== undefined;
+        if (isBracketBus && cur) {
+          cur.sec = parseInt(m[3], 16); cur.sub = m[4] !== undefined ? parseInt(m[4], 16) : cur.sec;
+          lastEnd = m.index + m[0].length; continue;
+        }
+        // node-creating token
+        let parent;
+        if (cur === null) {
+          if (ci >= 0) {
+            parent = branch[connAbs];
+            if (!parent) { parent = PSEUDO; branch[connAbs] = PSEUDO; }
+            if (gap[ci] === '\\') delete branch[connAbs];
+          } else parent = PSEUDO;
+        } else {
+          if (ci >= 0 && gap[ci] === '+') branch[connAbs] = cur;
+          parent = cur;
+        }
+        let node;
+        if (m[1] !== undefined) node = { type: 'root', domain: m[1].toLowerCase(), bus: parseInt(m[2], 16), parent: PSEUDO };
+        else if (isBracketBus) node = { type: 'root', domain: '0000', bus: parseInt(m[3], 16), parent: PSEUDO };
+        else node = { type: 'dev', tok: m[5].toLowerCase(), parent };
+        nodes.push(node); if (node.type === 'root') roots.push(node);
+        cur = node; lastEnd = m.index + m[0].length;
+        if (node.type === 'dev' && line.substr(lastEnd, 2) === '  ') { node.desc = line.slice(lastEnd).trim(); break; }
+      }
+    }
+    const devs = new Map();
+    const resolve = (n) => {
+      if (n.bdf || n.type === 'root') return;
+      const p = n.parent;
+      let dom, bus;
+      if (p.type === 'root') { dom = p.domain; bus = p.bus; }
+      else { resolve(p); dom = p.domain; bus = p.sec; }
+      if (bus == null) bus = 0;
+      n.domain = dom; n.bus = bus; n.bdf = dom + ':' + hex2(bus) + ':' + n.tok;
+    };
+    nodes.forEach(resolve);
+    nodes.forEach((n) => {
+      if (n.type !== 'dev') return;
+      const p = n.parent;
+      devs.set(n.bdf, { bdf: n.bdf, parentBdf: p.type === 'root' ? null : p.bdf, rootKey: null, sec: n.sec, sub: n.sub, desc: n.desc || '' });
+    });
+    return { devs, roots: roots.map((r) => r.domain + ':' + hex2(r.bus)) };
+  }
+
+  /* ---------- 模型 ---------- */
+  function buildModel(vvvText, treeText) {
+    const vv = vvvText && vvvText.trim() ? parseVVV(vvvText) : { devs: [], denied: 0 };
+    const tr = treeText && treeText.trim() ? parseTree(treeText) : null;
+    const byBdf = new Map(); const warnings = [];
+    vv.devs.forEach((d) => { if (d.bdf) byBdf.set(d.bdf, d); });
+    if (tr) {
+      tr.devs.forEach((t, bdf) => {
+        let d = byBdf.get(bdf);
+        if (!d) {
+          d = { bdf, cls: '(僅出現於 -tv)', name: t.desc || '', role: t.sec != null ? 'bridge' : 'other', treeOnly: true, sec: t.sec, sub: t.sub, expType: null, hasExpress: false, src: 'tv' };
+          byBdf.set(bdf, d);
+        } else if (d.sec == null && t.sec != null) { d.sec = t.sec; d.sub = t.sub; }
+      });
+      if (vv.devs.length) {
+        const tvSet = new Set(tr.devs.keys());
+        vv.devs.forEach((d) => { if (!tvSet.has(d.bdf)) warnings.push({ sev: 'warn', title: `-vvv 有此裝置但 -tv 沒有`, bdf: d.bdf }); });
+      }
+    }
+    const list = [...byBdf.values()].sort((a, b) => (a.bdf < b.bdf ? -1 : 1));
+    list.forEach((d) => { d.domain = d.bdf.slice(0, 4); d.bus = parseInt(d.bdf.slice(5, 7), 16); });
+    const secMap = new Map();
+    list.forEach((d) => { if (d.sec != null && d.sec > 0) secMap.set(d.domain + ':' + hex2(d.sec), d.bdf); });
+    list.forEach((d) => {
+      const pBy = secMap.get(d.domain + ':' + hex2(d.bus)) || null;
+      let pT; if (tr) { const t = tr.devs.get(d.bdf); if (t) pT = t.parentBdf; }
+      d.parent = pT !== undefined ? pT : pBy;
+      if (d.parent === d.bdf) d.parent = null;
+      if (pT !== undefined && d.src === 'vvv' && pT !== pBy) warnings.push({ sev: 'warn', title: `-tv 與 -vvv 的上游關係不一致 (tv: ${pT || 'root'}, vvv: ${pBy || 'root'})`, bdf: d.bdf });
+      d.children = [];
+    });
+    list.forEach((d) => { if (d.parent && byBdf.get(d.parent)) byBdf.get(d.parent).children.push(d); else d.parent = null; });
+    list.forEach((d) => {
+      const path = []; let p = d.parent ? byBdf.get(d.parent) : null; let guard = 0;
+      while (p && guard++ < 40) { path.unshift(p.bdf); p = p.parent ? byBdf.get(p.parent) : null; }
+      d.path = path;
+      d.root = path.length ? rootKeyOf(path[0]) : rootKeyOf(d.bdf);
+    });
+    const roots = [...new Set(list.map((d) => d.root))].sort();
+    return { list, byBdf, roots, warnings, denied: vv.denied, hasVVV: vv.devs.length > 0, hasTree: !!tr, treeRoots: tr ? tr.roots : [] };
+  }
+
+  /* ---------- CPU 歸屬 ---------- */
+  function matchRoot(r, key) {
+    r = String(r).trim().toLowerCase();
+    if (/^[0-9a-f]{1,2}$/.test(r)) return key.slice(5) === r.padStart(2, '0');
+    const m = r.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,2})$/);
+    return !!m && key === m[1].padStart(4, '0') + ':' + m[2].padStart(2, '0');
+  }
+  function assignCpus(model, cfg) {
+    const defs = cfg && Array.isArray(cfg.cpus) ? cfg.cpus : null;
+    const domains = [...new Set(model.roots.map((r) => r.slice(0, 4)))].sort();
+    const cpus = new Map();
+    const get = (id, source) => { if (!cpus.has(id)) cpus.set(id, { id, roots: [], numa: [], source }); return cpus.get(id); };
+    const rootCpu = {};
+    model.roots.forEach((key) => {
+      const tally = {};
+      model.list.forEach((d) => { if (d.root === key && d.numa != null) tally[d.numa] = (tally[d.numa] || 0) + 1; });
+      const numaKeys = Object.keys(tally).sort((a, b) => tally[b] - tally[a]);
+      const numa = numaKeys.length ? +numaKeys[0] : null;
+      let id = null, source = null;
+      if (defs) {
+        for (const c of defs) if ((c.root_buses || []).some((r) => matchRoot(r, key))) { id = c.id; source = '設定檔 root_buses'; break; }
+        if (!id && numa != null) for (const c of defs) {
+          const ns = c.numa_nodes || (c.numa_node != null ? [c.numa_node] : []);
+          if (ns.includes(numa)) { id = c.id; source = '設定檔 numa_nodes'; break; }
+        }
+      }
+      if (!id && numa != null) { id = 'CPU' + numa; source = 'NUMA node'; }
+      if (!id) {
+        if (domains.length > 1) id = 'CPU' + domains.indexOf(key.slice(0, 4));
+        else id = 'CPU' + (parseInt(key.slice(5), 16) >= 0x80 ? 1 : 0);
+        source = '推測 (依 Bus 編號)';
+      }
+      const c = get(id, source); c.roots.push(key); if (numa != null && !c.numa.includes(numa)) c.numa.push(numa);
+      rootCpu[key] = id;
+    });
+    model.list.forEach((d) => { d.cpu = rootCpu[d.root] || null; d.cfgRole = d.role === 'switch_up' ? 'pcie_switch' : d.role; });
+    model.cpus = [...cpus.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+    return model.cpus;
+  }
+
+  /* ---------- Link 評估 ---------- */
+  function evalLink(p, c) {
+    const pc = p && p.cap ? p.cap : null, cc = c && c.cap ? c.cap : null;
+    const sta = (c && c.sta) || (p && p.sta);
+    if (!sta || sta.gts == null || sta.width == null) return { state: 'unknown' };
+    const gl = [pc && pc.gts, cc && cc.gts].filter((x) => x != null);
+    const wl = [pc && pc.width, cc && cc.width].filter((x) => x != null);
+    const maxG = gl.length ? Math.min(...gl) : sta.gts, maxW = wl.length ? Math.min(...wl) : sta.width;
+    const own = cc || pc || {};
+    // DLActive 只對 Root Port / Switch 下游埠有意義；端點與 Switch 上游埠的 DLActive- 是規格保留位，不代表斷線
+    const down = sta.width === 0 || (!c && !!p && !!p.sta && p.sta.dlActive === false);
+    const spdDown = sta.gts < maxG, widDown = sta.width < maxW;
+    const selfDown = (own.gts != null && sta.gts < own.gts) || (own.width != null && sta.width < own.width);
+    let state = 'ok';
+    if (down) state = 'down'; else if (spdDown || widDown) state = 'downgraded'; else if (selfDown) state = 'limited';
+    const curBw = bwOf(sta.gts, sta.width), maxBw = bwOf(maxG, maxW);
+    return {
+      state, cur: { gts: sta.gts, gen: genOf(sta.gts), width: sta.width }, max: { gts: maxG, gen: genOf(maxG), width: maxW },
+      own: { gts: own.gts == null ? null : own.gts, gen: genOf(own.gts), width: own.width == null ? null : own.width },
+      peer: pc && cc ? { gts: pc.gts, width: pc.width } : null,
+      spdDown, widDown, flagged: !!(sta.speedFlag === 'downgraded' || sta.widthFlag === 'downgraded'),
+      pct: curBw != null && maxBw ? Math.round((curBw / maxBw) * 100) : null, curBw, maxBw,
+      targetGts: c && c.targetGts != null ? c.targetGts : null
+    };
+  }
+  const genText = (gts, w) => (genOf(gts) ? 'Gen' + genOf(gts) : (gts == null ? '?' : gts + 'GT/s')) + ' x' + (w == null ? '?' : w);
+
+  /* ---------- 分析 ---------- */
+  function analyze(model, cfg) {
+    const issues = []; const sevByBdf = {};
+    const rank = { bad: 3, warn: 2, info: 1 };
+    const add = (sev, cat, title, detail, bdf, extra) => {
+      issues.push(Object.assign({ sev, cat, title, detail: detail || '', bdf: bdf || null }, extra || {}));
+      if (bdf && (!sevByBdf[bdf] || rank[sev] > rank[sevByBdf[bdf]])) sevByBdf[bdf] = sev;
+    };
+    assignCpus(model, cfg);
+    const rules = (cfg && cfg.link_rules) || {};
+    const expDevs = ((cfg && Array.isArray(cfg.devices)) ? cfg.devices : []).map((e) => Object.assign({}, e, { bdfN: normBdf(e.bdf), role: e.role }));
+    const expByBdf = new Map(); expDevs.forEach((e) => { if (e.bdfN) expByBdf.set(e.bdfN, e); });
+
+    // 解析層級
+    if (model.denied) add('warn', 'parse', `${model.denied} 個裝置無法讀取 Capabilities (access denied)`, '請用 root / sudo 執行 lspci -vvv，否則看不到 LnkCap / LnkSta。');
+    model.warnings.forEach((w) => add(w.sev, 'parse', w.title, '', w.bdf));
+    if (!model.hasVVV && model.hasTree) {
+      add('info', 'parse', '只載入了 -tv', '沒有 -vvv 就無法判斷裝置類型、Link 速度/寬度與 NUMA，因此不做數量與設定檔比對。請一併載入 lspci -vvv。');
+      model.links = [];
+      const counts = {}; COUNT_ROLES.forEach((r) => { counts[r] = { actual: 0, expected: null, state: 'na' }; });
+      return { issues, sevByBdf, counts, actual: {}, sevCount: { bad: 0, warn: 0, info: 1 }, expRes: [], links: [], hasConfig: !!cfg, treeOnly: true };
+    }
+
+    // Link 清單
+    const links = [];
+    model.list.forEach((d) => {
+      const p = d.parent ? model.byBdf.get(d.parent) : null;
+      const isPort = d.role === 'root_port' || d.role === 'switch_down';
+      if (isPort && d.children.length === 0 && d.sec != null && d.sec > 0) {
+        links.push({ parent: d, child: null, info: evalLink(d, null) });
+      }
+      if (d.role === 'host_bridge' || !d.hasExpress || !d.sta) { return; }
+      if (d.expType === 'Root Complex Integrated Endpoint') return;
+      // Root Port / Switch 下游埠的 LnkSta 描述的是它「下游」那條 Link，已由下游裝置代表；Switch 內部 UP→DSP 不是實體 Link
+      if (d.role === 'root_port' || d.role === 'switch_down') return;
+      if (!p || !p.hasExpress) links.push({ parent: p, child: d, info: evalLink(null, d) });
+      else links.push({ parent: p, child: d, info: evalLink(p, d) });
+    });
+    model.links = links;
+    const linkByChild = new Map(); links.forEach((l) => { if (l.child) linkByChild.set(l.child.bdf, l); });
+
+    // 期望裝置比對
+    const claimed = new Set(); const expRes = [];
+    const pending = [];
+    expDevs.forEach((e) => {
+      const a = e.bdfN ? model.byBdf.get(e.bdfN) : null;
+      if (a && a.cfgRole === e.role) { claimed.add(a.bdf); expRes.push({ exp: e, state: 'ok', actual: a }); }
+      else pending.push({ e, occupied: a });
+    });
+    pending.forEach(({ e, occupied }) => {
+      const cands = model.list.filter((d) => !claimed.has(d.bdf) && d.cfgRole === e.role && !expByBdf.has(d.bdf)
+        && (!e.vendor_id || d.vendorId === String(e.vendor_id).toLowerCase()) && (!e.device_id || d.deviceId === String(e.device_id).toLowerCase()));
+      cands.sort((x, y) => ((y.cpu === e.cpu) - (x.cpu === e.cpu)) || (x.bdf < y.bdf ? -1 : 1));
+      if (cands.length) { const a = cands[0]; claimed.add(a.bdf); expRes.push({ exp: e, state: 'moved', actual: a }); }
+      else expRes.push({ exp: e, state: 'missing', actual: null, occupied });
+    });
+    const coveredPorts = new Set();
+    const portFor = (e) => {
+      let port = e.parent_bdf ? model.byBdf.get(normBdf(e.parent_bdf)) : null;
+      if (!port && e.bdfN) {
+        const bus = parseInt(e.bdfN.slice(5, 7), 16);
+        port = model.list.find((d) => d.sec === bus && d.domain === e.bdfN.slice(0, 4) && (d.role === 'root_port' || d.role === 'switch_down'));
+      }
+      return port || null;
+    };
+    expRes.forEach((r) => {
+      const e = r.exp, nm = e.name || e.bdf, roleL = ROLE_LABEL[e.role] || e.role;
+      if (r.state === 'missing') {
+        const port = portFor(e);
+        r.port = port ? port.bdf : null;
+        let detail = `設定檔預期 ${e.bdf} 有 ${roleL}${e.cpu ? '（' + e.cpu + '）' : ''}，但實際找不到。`;
+        if (port) {
+          coveredPorts.add(port.bdf);
+          const pd = port.presDet === true ? '上游埠 ' + port.bdf + ' 偵測到有卡 (PresDet+) 但 Link 未建立：可能接觸不良、卡片故障或供電/重置問題。'
+            : port.presDet === false ? '上游埠 ' + port.bdf + ' 未偵測到卡 (PresDet-)：該槽位是空的或卡未插好。'
+            : '上游埠 ' + port.bdf + ' 存在但下方沒有裝置。';
+          detail += ' ' + pd;
+        } else detail += ' 連上游埠也不存在，可能是整組 Switch 或 Riser 沒有被偵測到。';
+        if (r.occupied) detail += ` 另外此 BDF 被「${ROLE_LABEL[r.occupied.cfgRole] || r.occupied.cfgRole}」佔用。`;
+        add('bad', 'missing', `缺少 ${nm}`, detail, e.bdfN, { expName: nm, role: e.role });
+      } else if (r.state === 'moved') {
+        add('warn', 'moved', `${nm} 的 BDF 改變`, `設定檔 ${e.bdf} → 實際 ${r.actual.bdf}（BDF 變動通常代表上游 Port 或 Bus 編號改變，需確認插槽/Riser 是否接對）。`, r.actual.bdf, { expName: nm, role: e.role });
+      } else {
+        const a = r.actual;
+        if (e.vendor_id && a.vendorId && a.vendorId !== String(e.vendor_id).toLowerCase() || e.device_id && a.deviceId && a.deviceId !== String(e.device_id).toLowerCase()) {
+          r.state = 'mismatch';
+          add('warn', 'mismatch', `${nm} 型號與設定檔不同`, `設定檔 ${e.vendor_id || '*'}:${e.device_id || '*'}，實際 ${a.vendorId}:${a.deviceId} (${a.name})`, a.bdf);
+        }
+        if (e.parent_bdf && normBdf(e.parent_bdf) && a.parent !== normBdf(e.parent_bdf)) add('warn', 'path', `${nm} 的上游 Port 不同`, `設定檔 ${normBdf(e.parent_bdf)}，實際 ${a.parent || 'Root Complex'}`, a.bdf);
+        if (e.cpu && a.cpu && a.cpu !== e.cpu) add('warn', 'cpu', `${nm} 掛在不同的 CPU`, `設定檔 ${e.cpu}，實際 ${a.cpu}`, a.bdf);
+      }
+    });
+    model.expRes = expRes;
+    if (expDevs.length) {
+      const tracked = ['gpu', 'nic', 'nvme', 'storage', 'nvswitch', 'pcie_switch'];
+      model.list.forEach((d) => {
+        if (tracked.includes(d.cfgRole) && !claimed.has(d.bdf) && !expByBdf.has(d.bdf)) {
+          add('warn', 'extra', `多出設定檔沒有的 ${ROLE_LABEL[d.cfgRole]}`, `${d.bdf} ${d.name}`, d.bdf);
+        }
+      });
+    }
+
+    // Link 問題
+    links.forEach((l) => {
+      const c = l.child, p = l.parent, i = l.info;
+      if (i.state === 'unknown') return;
+      if (!c) { // 空埠
+        if (coveredPorts.has(p.bdf)) return;
+        if (p.presDet === true && (i.state === 'down')) add('bad', 'linkdown', `${p.bdf} 偵測到卡但 Link 未建立`, 'PresDet+ 且 DLActive-，下游裝置沒有 train 起來。', p.bdf);
+        return;
+      }
+      const role = c.cfgRole, nm = (expByBdf.get(c.bdf) && expByBdf.get(c.bdf).name) || (ROLE_LABEL[role] + ' ' + c.bdf);
+      const reasons = []; let sev = null;
+      if (i.state === 'down') { reasons.push('Link 已斷 (Width x0 / DLActive-)'); sev = 'bad'; }
+      else if (i.state === 'downgraded') {
+        const parts = [];
+        if (i.spdDown) parts.push(`速度 ${genText(i.cur.gts, i.cur.width).split(' ')[0]} (${i.cur.gts}GT/s) < 最大 ${genText(i.max.gts, i.max.width).split(' ')[0]} (${i.max.gts}GT/s)`);
+        if (i.widDown) parts.push(`寬度 x${i.cur.width} < 最大 x${i.max.width}`);
+        reasons.push('Link 降速/降寬：' + parts.join('，') + (i.pct != null ? `，約剩 ${i.pct}% 頻寬` : ''));
+        sev = i.pct != null && i.pct <= 50 ? 'bad' : 'warn';
+      }
+      // 設定檔期望
+      const ex = expByBdf.get(c.bdf), rule = (ex && ex.link) || rules[role] || null;
+      if (rule && i.cur) {
+        const eg = rule.gen != null ? rule.gen : (rule.gts != null ? genOf(rule.gts) : null), ew = rule.width;
+        const miss = [];
+        if (eg != null && i.cur.gen != null && i.cur.gen < eg) miss.push(`Gen${i.cur.gen} < 設定檔 Gen${eg}`);
+        if (ew != null && i.cur.width < ew) miss.push(`x${i.cur.width} < 設定檔 x${ew}`);
+        if (miss.length) { reasons.push('低於設定檔：' + miss.join('，')); if (!sev) sev = 'warn'; l.cfgMiss = miss; }
+      }
+      if (reasons.length) {
+        let detail = reasons.join('；');
+        if (role === 'gpu' && i.spdDown && !i.widDown) detail += '。GPU 閒置時會動態降速，請在有負載時重新擷取，或用 nvidia-smi -q 確認。';
+        if (i.targetGts != null && i.targetGts < i.max.gts) detail += `。LnkCtl2 Target Link Speed 被設為 ${i.targetGts}GT/s（可能是 BIOS 或韌體限制）。`;
+        add(sev, 'link', `${nm} Link 異常`, detail, c.bdf, { linkState: i.state });
+      } else if (i.state === 'limited') {
+        add('info', 'link', `${nm} 受對端限制`, `裝置本身支援 ${genText(i.own.gts, i.own.width)}，但上游 Port 只支援 ${genText(i.max.gts, i.max.width)}，這是正常協商結果。`, c.bdf, { linkState: 'limited' });
+      }
+    });
+
+    // AER
+    model.list.forEach((d) => {
+      if (d.aerUE && d.aerUE.length) add('bad', 'aer', `${d.bdf} 有 Uncorrectable 錯誤`, 'UESta: ' + d.aerUE.join(', '), d.bdf);
+      if (d.aerCE && d.aerCE.length) add('warn', 'aer', `${d.bdf} 有 Correctable 錯誤`, 'CESta: ' + d.aerCE.join(', ') + '（常與 Link 品質不良有關）', d.bdf);
+    });
+
+    // 數量
+    const actual = {
+      cpu: model.cpus.length,
+      gpu: model.list.filter((d) => d.role === 'gpu').length,
+      pcie_switch: model.list.filter((d) => d.role === 'switch_up').length,
+      nic: model.list.filter((d) => d.role === 'nic').length,
+      nvme: model.list.filter((d) => d.role === 'nvme').length,
+      storage: model.list.filter((d) => d.role === 'storage').length,
+      nvswitch: model.list.filter((d) => d.role === 'nvswitch').length
+    };
+    const expected = (cfg && cfg.expected_counts) || {};
+    const counts = {};
+    COUNT_ROLES.forEach((r) => {
+      const ex = expected[r] != null ? Number(expected[r]) : null; const a = actual[r];
+      let state = 'na';
+      if (ex != null) state = a === ex ? 'ok' : a < ex ? 'bad' : 'warn';
+      counts[r] = { actual: a, expected: ex, state };
+      if (ex != null && a !== ex) add(a < ex ? 'bad' : 'warn', 'count', `${ROLE_LABEL[r]} 數量不符`, `設定檔 ${ex}，實際 ${a}（${a < ex ? '少' : '多'} ${Math.abs(a - ex)}）`);
+    });
+    // 每 CPU 期望
+    if (cfg && Array.isArray(cfg.cpus)) cfg.cpus.forEach((c) => {
+      if (!c.expected_counts) return;
+      Object.keys(c.expected_counts).forEach((r) => {
+        const a = model.list.filter((d) => d.cpu === c.id && (r === 'pcie_switch' ? d.role === 'switch_up' : d.role === r)).length;
+        if (a !== c.expected_counts[r]) add(a < c.expected_counts[r] ? 'bad' : 'warn', 'count', `${c.id} 的 ${ROLE_LABEL[r] || r} 數量不符`, `設定檔 ${c.expected_counts[r]}，實際 ${a}`);
+      });
+    });
+
+    const sevCount = { bad: 0, warn: 0, info: 0 };
+    issues.forEach((i) => { sevCount[i.sev]++; });
+    issues.sort((a, b) => rank[b.sev] - rank[a.sev]);
+    return { issues, sevByBdf, counts, actual, sevCount, expRes, links, hasConfig: !!cfg };
+  }
+
+  /* ---------- 槽位圖 ---------- */
+  const shortName = (s) => (s || '').replace(/\b(Corporation|Inc\.?|Technologies|Co\.,? Ltd\.?|Semiconductor)\b/g, '').replace(/\s{2,}/g, ' ').replace(/\s*\/\s*$/, '').trim();
+  function buildSlotMap(model, an) {
+    const cpus = model.cpus.map((c) => ({ id: c.id, source: c.source, numa: c.numa, roots: c.roots, groups: new Map(), other: [] }));
+    const cpuBy = new Map(cpus.map((c) => [c.id, c]));
+    const sevOf = (b) => an.sevByBdf[b] || 'ok';
+    const linkOf = (d) => { const l = model.links.find((x) => x.child && x.child.bdf === d.bdf); return l ? l.info : null; };
+    const nearestUp = (d) => { for (let i = d.path.length - 1; i >= 0; i--) { const a = model.byBdf.get(d.path[i]); if (a && a.role === 'switch_up') return a; } return null; };
+    const grp = (cpu, up, key) => {
+      const k = up ? up.bdf : (key || 'direct');
+      if (!cpu.groups.has(k)) cpu.groups.set(k, { key: k, up, type: up ? 'switch' : 'direct', chips: [] });
+      return cpu.groups.get(k);
+    };
+    const cpuOfDev = (d) => cpuBy.get(d.cpu) || cpus[0];
+    model.list.forEach((d) => { if (d.role === 'switch_up' && cpuOfDev(d)) grp(cpuOfDev(d), d); });
+    model.list.forEach((d) => {
+      const cpu = cpuOfDev(d); if (!cpu) return;
+      if (ENDPOINT_ROLES.includes(d.role)) {
+        const g = grp(cpu, nearestUp(d));
+        const info = linkOf(d);
+        g.chips.push({ kind: 'dev', bdf: d.bdf, role: d.role, dev: d, label: shortName(d.name), link: info, sev: sevOf(d.bdf) });
+      } else if (d.role !== 'host_bridge' && d.role !== 'switch_up' && d.role !== 'switch_down' && d.role !== 'root_port' && d.role !== 'bridge') cpu.other.push(d);
+    });
+    const covered = new Set();
+    (an.expRes || []).forEach((r) => {
+      const e = r.exp;
+      if (r.state === 'missing') {
+        const port = r.port ? model.byBdf.get(r.port) : null;
+        const cpu = (port && cpuBy.get(port.cpu)) || cpuBy.get(e.cpu) || cpus[0]; if (!cpu) return;
+        let up = null;
+        if (port) { up = port.role === 'switch_down' ? model.byBdf.get(port.parent) : null; if (up && up.role !== 'switch_up') up = null; if (!up) up = nearestUp(port); }
+        if (port) covered.add(port.bdf);
+        const g = grp(cpu, up);
+        g.chips.push({ kind: 'missing', bdf: e.bdfN || e.bdf, role: e.role === 'pcie_switch' ? 'pcie_switch' : e.role, exp: e, label: e.name || e.bdf, port, sev: 'bad' });
+      } else if (r.state === 'moved') {
+        const chip = model.list.length && cpus.flatMap((c) => [...c.groups.values()]).flatMap((g) => g.chips).find((c) => c.dev && c.dev.bdf === r.actual.bdf);
+        if (chip) { chip.kind = 'moved'; chip.exp = e; chip.sev = 'warn'; }
+      }
+    });
+    model.links.forEach((l) => {
+      if (l.child) return;
+      const p = l.parent; if (covered.has(p.bdf)) return;
+      const cpu = cpuBy.get(p.cpu); if (!cpu) return;
+      const up = p.role === 'switch_down' ? model.byBdf.get(p.parent) : null;
+      const g = grp(cpu, up && up.role === 'switch_up' ? up : nearestUp(p));
+      const lost = p.presDet === true;
+      g.chips.push({ kind: 'empty', bdf: p.bdf, role: 'empty', port: p, label: lost ? '有卡但 Link 未建立' : '空槽', sev: lost ? 'bad' : 'none' });
+    });
+    cpus.forEach((c) => {
+      c.groups = [...c.groups.values()].sort((a, b) => (a.type === b.type ? (a.key < b.key ? -1 : 1) : a.type === 'switch' ? -1 : 1));
+      c.groups.forEach((g) => g.chips.sort((a, b) => (a.bdf < b.bdf ? -1 : 1)));
+    });
+    return cpus;
+  }
+
+  /* ---------- 基準 JSON / 驗證 ---------- */
+  function buildBaseline(model, an, meta) {
+    meta = meta || {};
+    const roles = ['gpu', 'nic', 'nvme', 'storage', 'nvswitch', 'pcie_switch'];
+    const counter = {}; const devices = []; const modeBy = {};
+    const prefix = { gpu: 'GPU', nic: 'NIC', nvme: 'NVME', storage: 'STOR', nvswitch: 'NVSW', pcie_switch: 'SW' };
+    model.list.forEach((d) => {
+      if (!roles.includes(d.cfgRole)) return;
+      const n = counter[d.cfgRole] = (counter[d.cfgRole] || 0);
+      counter[d.cfgRole]++;
+      const l = model.links.find((x) => x.child && x.child.bdf === d.bdf);
+      const e = { name: prefix[d.cfgRole] + n, role: d.cfgRole, bdf: d.bdf };
+      if (d.cpu) e.cpu = d.cpu;
+      if (d.parent) e.parent_bdf = d.parent;
+      if (d.vendorId) e.vendor_id = d.vendorId;
+      if (d.deviceId) e.device_id = d.deviceId;
+      if (d.slot) e.slot = d.slot;
+      if (l && l.info.cur) {
+        e.link = { gen: l.info.cur.gen, width: l.info.cur.width };
+        const k = d.cfgRole + '|' + e.link.gen + '|' + e.link.width; modeBy[k] = (modeBy[k] || 0) + 1;
+      }
+      e.required = true;
+      devices.push(e);
+    });
+    const link_rules = {};
+    roles.forEach((r) => {
+      let best = null, bn = 0;
+      Object.keys(modeBy).forEach((k) => { const [rr, g, w] = k.split('|'); if (rr === r && modeBy[k] > bn) { bn = modeBy[k]; best = { gen: +g, width: +w }; } });
+      if (best) link_rules[r] = best;
+    });
+    const expected_counts = {};
+    COUNT_ROLES.forEach((r) => { expected_counts[r] = an.actual[r]; });
+    return {
+      schema: 'pcie-topology-config/1',
+      meta: { platform: meta.platform || '', description: meta.description || '由已知正常的主機 lspci 輸出產生的基準設定檔', generated_at: new Date().toISOString().slice(0, 10), source: 'lspci -vvv / -tv' },
+      expected_counts,
+      link_rules,
+      cpus: model.cpus.map((c) => ({ id: c.id, numa_nodes: c.numa.slice().sort(), root_buses: c.roots.slice().sort() })),
+      devices
+    };
+  }
+
+  function validateConfig(cfg) {
+    const errors = [], warnings = [];
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { errors: ['設定檔必須是 JSON 物件'], warnings };
+    if (!cfg.schema) warnings.push('缺少 "schema"，建議填 "pcie-topology-config/1"');
+    else if (!/^pcie-topology-config\//.test(cfg.schema)) errors.push('"schema" 不是 pcie-topology-config/*');
+    if (cfg.expected_counts) Object.keys(cfg.expected_counts).forEach((k) => {
+      if (!COUNT_ROLES.includes(k)) warnings.push(`expected_counts.${k} 不是已知類型`);
+      if (!Number.isInteger(cfg.expected_counts[k]) || cfg.expected_counts[k] < 0) errors.push(`expected_counts.${k} 必須是 0 以上整數`);
+    });
+    if (cfg.devices != null) {
+      if (!Array.isArray(cfg.devices)) errors.push('"devices" 必須是陣列');
+      else {
+        const seen = new Set();
+        cfg.devices.forEach((d, i) => {
+          const b = normBdf(d && d.bdf);
+          if (!b) errors.push(`devices[${i}].bdf 格式錯誤（例：0000:18:00.0）`);
+          else if (seen.has(b)) errors.push(`devices[${i}].bdf ${b} 重複`); else seen.add(b);
+          if (!d || !CFG_ROLES.includes(d.role)) errors.push(`devices[${i}].role 必須是 ${CFG_ROLES.join(' / ')}`);
+        });
+      }
+    }
+    if (cfg.cpus != null) {
+      if (!Array.isArray(cfg.cpus)) errors.push('"cpus" 必須是陣列');
+      else cfg.cpus.forEach((c, i) => { if (!c || !c.id) errors.push(`cpus[${i}].id 必填`); });
+    }
+    return { errors, warnings };
+  }
+
+  /* ---------- 範例資料 ---------- */
+  function buildSample(faulty) {
+    const D = []; const by = {};
+    const add = (bdf, o) => { o.bdf = bdf; D.push(o); by[bdf] = o; return o; };
+    const GPU = { cls: 'Processing accelerators', code: '1200', name: 'NVIDIA Corporation GH100 [H100 PCIe]', ven: '10de', dev: '2331', rev: 'a1', drv: 'nvidia', cap: [32, 16] };
+    GPU.cls = '3D controller'; GPU.code = '0302';
+    const NIC = { cls: 'Ethernet controller', code: '0200', name: 'Mellanox Technologies MT2910 Family [ConnectX-7]', ven: '15b3', dev: '1021', drv: 'mlx5_core', cap: [32, 16] };
+    const NVME = { cls: 'Non-Volatile memory controller', code: '0108', name: 'Samsung Electronics Co Ltd NVMe SSD Controller PM9A3', ven: '144d', dev: 'a80a', drv: 'nvme', cap: [16, 4] };
+    const stacks = [
+      { numa: 0, root: '15', rp: 0x16, dsp: [0x18, 0x19, 0x1a], nvmeRp: [0x1b, 0x1c], first: 0 },
+      { numa: 0, root: '3a', rp: 0x3b, dsp: [0x3d, 0x3e, 0x3f], nvmeRp: [0x40, 0x41], first: 2 },
+      { numa: 1, root: '97', rp: 0x98, dsp: [0x9a, 0x9b, 0x9c], nvmeRp: [0x9d, 0x9e], first: 4 },
+      { numa: 1, root: 'ae', rp: 0xaf, dsp: [0xb1, 0xb2, 0xb3], nvmeRp: [0xb4, 0xb5], first: 6 }
+    ];
+    // 平台裝置
+    add('0000:00:00.0', { cls: 'Host bridge', code: '0600', name: 'Intel Corporation Device', ven: '8086', dev: '09a2', numa: 0 });
+    add('0000:00:1f.0', { cls: 'ISA bridge', code: '0601', name: 'Intel Corporation Device', ven: '8086', dev: '1b81', numa: 0 });
+    add('0000:00:1c.0', { cls: 'PCI bridge', code: '0604', name: 'Intel Corporation Device', ven: '8086', dev: '1bbc', numa: 0, ex: 'Root Port', sec: 0x03, cap: [8, 1], sta: [8, 1] });
+    add('0000:03:00.0', { cls: 'VGA compatible controller', code: '0300', name: 'ASPEED Technology, Inc. ASPEED Graphics Family', ven: '1a03', dev: '2000', rev: '52', numa: 0, parent: '0000:00:1c.0', drv: 'ast' });
+    add('0000:80:00.0', { cls: 'Host bridge', code: '0600', name: 'Intel Corporation Device', ven: '8086', dev: '09a2', numa: 1 });
+    add('0000:80:01.0', { cls: 'PCI bridge', code: '0604', name: 'Intel Corporation Device', ven: '8086', dev: '0b00', numa: 1, ex: 'Root Port', sec: 0x81, cap: [8, 8], sta: [8, 8] });
+    add('0000:81:00.0', Object.assign({}, { cls: 'Serial Attached SCSI controller', code: '0107', name: 'Broadcom / LSI SAS3808', ven: '1000', dev: '00e2', numa: 1, parent: '0000:80:01.0', drv: 'mpt3sas', cap: [8, 8], sta: [8, 8], ex: 'Endpoint' }));
+    const rpSpec = (bdf, sec, numa, extra) => add(bdf, Object.assign({ cls: 'PCI bridge', code: '0604', name: 'Intel Corporation Device', ven: '8086', dev: '0b00', numa, ex: 'Root Port', sec, cap: [32, 16], sta: [32, 16], slot: null }, extra));
+    const ep = (bdf, base, parent, numa, sta, extra) => add(bdf, Object.assign({}, base, { parent, numa, ex: 'Endpoint', sta: sta || base.cap }, extra));
+    stacks.forEach((s) => {
+      const r = s.root, n = s.numa;
+      add(`0000:${r}:00.0`, { cls: 'Host bridge', code: '0600', name: 'Intel Corporation Device', ven: '8086', dev: '09a2', numa: n });
+      const rpB = `0000:${r}:00.0`; // 以下 0000:rr:00.0 作為 Host bridge，Root Port 用 01.0 起
+      const rp0 = `0000:${r}:01.0`;
+      rpSpec(rp0, s.rp, n, { slot: String(s.first + 1) });
+      const up = `0000:${hex2(s.rp)}:00.0`;
+      add(up, { cls: 'PCI bridge', code: '0604', name: 'Broadcom / LSI PEX890xx PCIe Gen 5 Switch', ven: '1000', dev: 'c030', numa: n, ex: 'Upstream Port', sec: s.dsp[0] - 1, parent: rp0, cap: [32, 16], sta: [32, 16] });
+      const dsec = s.dsp[0] - 1;
+      s.dsp.forEach((bus, i) => {
+        const d = add(`0000:${hex2(dsec)}:0${i}.0`, { cls: 'PCI bridge', code: '0604', name: 'Broadcom / LSI PEX890xx PCIe Gen 5 Switch', ven: '1000', dev: 'c030', numa: n, ex: 'Downstream Port', sec: bus, parent: up, cap: [32, 16], sta: [32, 16], slot: String(s.first * 3 + i + 1) });
+        const dev = i < 2 ? Object.assign({}, GPU) : Object.assign({}, NIC);
+        ep(`0000:${hex2(bus)}:00.0`, dev, d.bdf, n, dev.cap);
+      });
+      s.nvmeRp.forEach((bus, i) => {
+        const p = rpSpec(`0000:${r}:0${i + 2}.0`, bus, n, { cap: [16, 4], sta: [16, 4] });
+        ep(`0000:${hex2(bus)}:00.0`, NVME, p.bdf, n, NVME.cap);
+      });
+    });
+    // 修正：Host bridge 與 Root Port 使用不同 function，避免 00.0 與 up 衝突 (up 在另一個 bus，不衝突)
+    if (faulty) {
+      // GPU7 缺失：DSP 仍在、有偵測到卡但 Link 沒起來
+      const g7 = by['0000:b2:00.0']; D.splice(D.indexOf(g7), 1); delete by['0000:b2:00.0'];
+      const dsp7 = by['0000:b0:01.0']; dsp7.sta = [2.5, 0]; dsp7.presDet = true; dsp7.linkDown = true;
+      // GPU2 降寬
+      by['0000:3d:00.0'].sta = [32, 8]; by['0000:3d:00.0'].ce = ['BadTLP', 'Timeout'];
+      by['0000:3c:00.0'].sta = [32, 8];
+      // NIC1 降速
+      by['0000:3f:00.0'].sta = [8, 16]; by['0000:3c:02.0'].sta = [8, 16];
+      // NVMe3 降寬
+      by['0000:41:00.0'].sta = [16, 2]; by['0000:3a:03.0'].sta = [16, 2];
+      // NVMe7 BDF 改變：原 b5 的 Root Port 空，改到 ae:04.0 / b6
+      const nv7 = by['0000:b5:00.0']; D.splice(D.indexOf(nv7), 1); delete by['0000:b5:00.0'];
+      by['0000:ae:03.0'].presDet = false; by['0000:ae:03.0'].sta = [2.5, 0]; by['0000:ae:03.0'].linkDown = true;
+      const rpx = add('0000:ae:04.0', Object.assign({}, by['0000:ae:03.0'], { sec: 0xb6, presDet: true, linkDown: false, sta: [16, 4], slot: '4' }));
+      add('0000:b6:00.0', Object.assign({}, NVME, { parent: rpx.bdf, numa: 1, ex: 'Endpoint', sta: NVME.cap }));
+    }
+    // 計算 DSP/Port presDet、sub bus、其餘 sta
+    D.forEach((o) => { if (o.presDet === undefined && (o.ex === 'Root Port' || o.ex === 'Downstream Port')) o.presDet = D.some((c) => c.parent === o.bdf); });
+    const subOf = (o) => { if (o.sec == null) return o.bus; let m = o.sec; D.filter((c) => c.parent === o.bdf).forEach((c) => { m = Math.max(m, c.sec != null ? subOf(c) : parseInt(c.bdf.slice(5, 7), 16)); }); return m; };
+    D.forEach((o) => { if (o.sec != null) o.sub = subOf(o); });
+    D.sort((a, b) => (a.bdf < b.bdf ? -1 : 1));
+    const fl = (sta, cap, isPort, o) => {
+      const sp = sta[0] + 'GT/s' + (sta[0] < cap[0] ? ' (downgraded)' : ''), wd = 'x' + sta[1] + (sta[1] < cap[1] ? ' (downgraded)' : '');
+      return 'Speed ' + sp + ', Width ' + wd + (isPort ? `, TrErr- Train- SlotClk+ DLActive${o.linkDown ? '-' : '+'} BWMgmt- ABWMgmt-` : '');
+    };
+    const T = '\t';
+    const vvv = D.map((o) => {
+      const L = [];
+      L.push(`${o.bdf.slice(5)} ${o.cls} [${o.code}]: ${o.name} [${o.ven}:${o.dev}]${o.rev ? ' (rev ' + o.rev + ')' : ''}`);
+      L.push(T + 'Control: I/O+ Mem+ BusMaster+ SpecCycle- MemWINV- VGASnoop- ParErr+ Stepping- SERR+ FastB2B- DisINTx+');
+      if (o.slot) L.push(T + 'Physical Slot: ' + o.slot);
+      if (o.numa != null) L.push(T + 'NUMA node: ' + o.numa);
+      if (o.sec != null) L.push(T + `Bus: primary=${o.bdf.slice(5, 7)}, secondary=${hex2(o.sec)}, subordinate=${hex2(o.sub)}, sec-latency=0`);
+      if (o.ex) {
+        const isPort = o.ex !== 'Endpoint';
+        L.push(T + `Capabilities: [68] Express (v2) ${o.ex}${o.ex === 'Root Port' || o.ex === 'Downstream Port' ? ' (Slot+)' : ''}, MSI 00`);
+        L.push(T + T + 'DevCap:' + T + 'MaxPayload 512 bytes, PhantFunc 0, Latency L0s <64ns');
+        L.push(T + T + 'LnkCap:' + T + `Port #0, Speed ${o.cap[0]}GT/s, Width x${o.cap[1]}, ASPM L1, Exit Latency L1 <4us`);
+        L.push(T + T + 'LnkCtl:' + T + 'ASPM Disabled; RCB 64 bytes, Disabled- CommClk+');
+        L.push(T + T + 'LnkSta:' + T + fl(o.sta || o.cap, o.cap, false, o));
+        if (isPort) L.push(T + T + T + `TrErr- Train- SlotClk+ DLActive${o.linkDown ? '-' : '+'} BWMgmt- ABWMgmt-`);
+        if (o.ex === 'Root Port' || o.ex === 'Downstream Port') L.push(T + T + 'SltSta:' + T + `Status: AttnBtn- PowerFlt- MRL- CmdCplt- PresDet${o.presDet ? '+' : '-'} Interlock-`);
+        L.push(T + T + 'LnkCtl2:' + T + `Target Link Speed: ${o.cap[0]}GT/s, EnterCompliance- SpeedDis-`);
+        L.push(T + 'Capabilities: [1d0 v2] Advanced Error Reporting');
+        L.push(T + T + 'UESta:' + T + 'DLP- SDES- TLP- FCP- CmpltTO- CmpltAbrt- UnxCmplt- RxOF- MalfTLP- ECRC- UnsupReq- ACSViol-');
+        const ce = o.ce || [];
+        L.push(T + T + 'CESta:' + T + ['RxErr', 'BadTLP', 'BadDLLP', 'Rollover', 'Timeout', 'AdvNonFatalErr'].map((k) => k + (ce.includes(k) ? '+' : '-')).join(' '));
+      } else if (o.cls !== 'Host bridge' && o.cls !== 'ISA bridge') L.push(T + 'Capabilities: <access denied>'.replace('<access denied>', '[50] MSI: Enable- Count=1/1 Maskable- 64bit+'));
+      if (o.drv) L.push(T + 'Kernel driver in use: ' + o.drv);
+      return L.join('\n');
+    }).join('\n\n') + '\n';
+
+    // ---- tree ----
+    const kids = {};
+    D.forEach((o) => { const k = o.parent || ('root:' + o.bdf.slice(0, 7)); (kids[k] = kids[k] || []).push(o); });
+    Object.values(kids).forEach((a) => a.sort((x, y) => (x.bdf < y.bdf ? -1 : 1)));
+    const tok = (o) => o.bdf.slice(8);
+    const block = (head, ch, isHost, devFn) => {
+      if (ch.length === 1) {
+        const conn = isHost ? '---' : '----'; const s = devFn(ch[0]); const pre = ' '.repeat(head.length + conn.length);
+        return [head + conn + s[0], ...s.slice(1).map((l) => pre + l)];
+      }
+      const conn = isHost ? '-+-' : '--+-'; const k = head.length + conn.indexOf('+'); const out = [];
+      ch.forEach((c, i) => {
+        const s = devFn(c), last = i === ch.length - 1;
+        out.push(i === 0 ? head + conn + s[0] : ' '.repeat(k) + (last ? '\\' : '+') + '-' + s[0]);
+        const cont = ' '.repeat(k) + (last ? ' ' : '|') + ' ';
+        s.slice(1).forEach((l) => out.push(cont + l));
+      });
+      return out;
+    };
+    const dev = (o) => {
+      if (o.sec == null) return [tok(o) + '  ' + o.name];
+      const head = tok(o) + '-' + (o.sub > o.sec ? `[${hex2(o.sec)}-${hex2(o.sub)}]` : `[${hex2(o.sec)}]`);
+      const ch = kids[o.bdf] || [];
+      if (!ch.length) return [head + '--'];
+      return block(head, ch, false, dev);
+    };
+    const rootKeys = [...new Set(D.filter((o) => !o.parent).map((o) => o.bdf.slice(0, 7)))].sort();
+    const rootBlocks = rootKeys.map((k) => block(`[${k}]`, kids['root:' + k], true, dev));
+    let tv = [];
+    if (rootBlocks.length === 1) tv = rootBlocks[0].map((l, i) => (i === 0 ? '-' : ' ') + l);
+    else rootBlocks.forEach((bl, bi) => {
+      const last = bi === rootBlocks.length - 1;
+      bl.forEach((l, i) => { tv.push(i === 0 ? (bi === 0 ? '-+-' : ' ' + (last ? '\\' : '+') + '-') + l : ' ' + (last ? ' ' : '|') + ' ' + l); });
+    });
+    return { vvv, tree: tv.join('\n') + '\n', devices: D };
+  }
+
+  return { normBdf, parseVVV, parseTree, buildModel, assignCpus, analyze, buildSlotMap, buildBaseline, validateConfig, buildSample, evalLink, genOf, genText, bwOf, ROLE_LABEL, COUNT_ROLES, ENDPOINT_ROLES, CFG_ROLES, shortName, hex2, GEN_GTS };
+})();
+if (typeof module !== 'undefined') module.exports = PCIE;
+
+</script>
+<script>
+(function(){
+'use strict';
+const P = PCIE, R = P.ROLE_LABEL;
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ic = (n) => '<svg class="ic" aria-hidden="true"><use href="#i-' + n + '"/></svg>';
+const ROLE_ICON = { gpu:'gpu', nic:'nic', nvme:'nvme', storage:'disk', nvswitch:'switch', pcie_switch:'switch', switch_up:'switch', switch_down:'port', root_port:'port', host_bridge:'cpu', bmc_vga:'monitor', bridge:'port', other:'chip' };
+const HOP_LABEL = { host_bridge:'RC', root_port:'Root Port', switch_up:'Switch↑', switch_down:'Switch↓', bridge:'Bridge' };
+const CAT_LABEL = { missing:'缺少裝置', moved:'BDF 變動', extra:'多出裝置', link:'Link', linkdown:'Link 斷', count:'數量', aer:'AER 錯誤', mismatch:'型號不同', path:'上游路徑', cpu:'CPU 歸屬', parse:'資料' };
+
+const S = { vvv:'', tree:'', cfg:null, names:{ vvv:'', tree:'', cfg:'' }, sample:false, tab:'slots', cfgText:'' };
+let model = null, an = null, slotMap = [], oneDomain = true, expName = {};
+const sh = (b) => (oneDomain && b && b.startsWith('0000:') ? b.slice(5) : b || '');
+const sevClass = (s) => (s === 'bad' ? 'bad' : s === 'warn' ? 'warn' : 'ok');
+const roleName = (d) => R[d.role] || d.role;
+const nameOf = (d) => expName[d.bdf] || P.shortName(d.name) || R[d.role];
+const toastEl = $('#toast'); let toastT = 0;
+function toast(m){ toastEl.textContent = m; toastEl.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { toastEl.hidden = true; }, 2800); }
+
+/* ---------- 載入 ---------- */
+function sniff(t){
+  const s = t.trim();
+  if (s[0] === '{') { try { JSON.parse(s); return 'cfg'; } catch (e) { return 'cfg'; } }
+  if (/^\s*-\+?-?\[[0-9a-f]{4}:[0-9a-f]{2}\]/m.test(t) || /^\s*-\[[0-9a-f]{2}\]-/m.test(t)) return 'tree';
+  if (/^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]\s/m.test(t)) return 'vvv';
+  return null;
+}
+function resetAll(){ S.vvv = ''; S.tree = ''; S.cfg = null; S.cfgText = ''; S.names = { vvv:'', tree:'', cfg:'' }; S.sample = false; }
+function setSlot(kind, text, name, quiet){
+  if (S.sample) resetAll();
+  if (kind === 'cfg') {
+    let obj; try { obj = JSON.parse(text); } catch (e) { toast('JSON 格式錯誤：' + e.message); S.cfgMsg = { errors:['JSON 格式錯誤：' + e.message], warnings:[] }; render(); return; }
+    const v = P.validateConfig(obj); S.cfgMsg = v;
+    if (v.errors.length) { toast('設定檔有 ' + v.errors.length + ' 個錯誤，未套用'); render(); return; }
+    S.cfg = obj; S.cfgText = JSON.stringify(obj, null, 2);
+  } else S[kind] = text;
+  S.names[kind] = name || '貼上文字';
+  recompute(); if (!quiet) toast('已載入 ' + ({ vvv:'lspci -vvv', tree:'lspci -tv', cfg:'設定檔' }[kind]));
+}
+async function readFiles(files, hint){
+  for (const f of files) {
+    const t = await f.text(); let k = sniff(t);
+    if (!k) { toast(f.name + '：無法辨識內容（不是 lspci -vvv / -tv / JSON）'); continue; }
+    if (hint && k !== hint) toast(f.name + ' 看起來是 ' + ({ vvv:'-vvv', tree:'-tv', cfg:'JSON 設定檔' }[k]) + '，已放到對應欄位');
+    setSlot(k, t, f.name, true);
+  }
+}
+$$('.drop').forEach((el) => {
+  const kind = el.dataset.slot;
+  $('input[type=file]', el).addEventListener('change', (e) => { readFiles([...e.target.files], kind); e.target.value = ''; });
+  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+});
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => { e.preventDefault(); $$('.drop').forEach((d) => d.classList.remove('over')); if (e.dataTransfer && e.dataTransfer.files.length) readFiles([...e.dataTransfer.files]); });
+$$('[data-apply]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.apply, t = $('#ta-' + k).value; if (!t.trim()) return; setSlot(k, t, '貼上文字'); }));
+$('#btnClear').addEventListener('click', () => { resetAll(); S.cfgMsg = null; recompute(); });
+$('#btnSample').addEventListener('click', loadSample);
+$('#btnToJson').addEventListener('click', () => setTab('json'));
+
+function loadSample(){
+  const ok = P.buildSample(false), bad = P.buildSample(true);
+  const m0 = P.buildModel(ok.vvv, ok.tree), a0 = P.analyze(m0, null);
+  const cfg = P.buildBaseline(m0, a0, { platform:'範例 2P GPU 伺服器', description:'範例：8 GPU / 4 Switch / 4 NIC / 8 NVMe 的正常配置' });
+  resetAll();
+  S.vvv = bad.vvv; S.tree = bad.tree; S.cfg = cfg; S.cfgText = JSON.stringify(cfg, null, 2); S.cfgMsg = null;
+  S.names = { vvv:'範例 lspci -vvv（模擬，含故障）', tree:'範例 lspci -tv（模擬）', cfg:'範例設定檔（正常配置）' }; S.sample = true;
+  recompute();
+}
+
+/* ---------- 分析 ---------- */
+function recompute(){
+  model = P.buildModel(S.vvv, S.tree);
+  an = P.analyze(model, S.cfg);
+  slotMap = P.buildSlotMap(model, an);
+  oneDomain = model.roots.every((r) => r.startsWith('0000:'));
+  expName = {}; (an.expRes || []).forEach((r) => { if (r.actual && r.exp.name) expName[r.actual.bdf] = r.exp.name; });
+  render();
+}
+const hasData = () => model && model.list.length > 0;
+const linkOf = (d) => { const l = (model.links || []).find((x) => x.child && x.child.bdf === d.bdf); return l ? l.info : null; };
+
+function lkBadge(i){
+  if (!i || i.state === 'unknown') return '<span class="lk">—</span>';
+  const t = P.genText(i.cur.gts, i.cur.width);
+  if (i.state === 'down') return '<span class="lk bad">' + ic('bad') + 'Link Down</span>';
+  if (i.state === 'downgraded') return '<span class="lk ' + (i.pct != null && i.pct <= 50 ? 'bad' : 'warn') + '">' + ic('down') + esc(t) + '</span>';
+  if (i.state === 'limited') return '<span class="lk lim">' + esc(t) + '</span>';
+  return '<span class="lk ok">' + esc(t) + '</span>';
+}
+
+/* ---------- 渲染 ---------- */
+function render(){
+  renderInputs(); renderVerdict();
+  const b = $('#issueBadge'); const n = hasData() ? an.sevCount.bad + an.sevCount.warn : 0; b.hidden = !n; b.textContent = n;
+  $('[data-panel=slots]').innerHTML = renderSlots();
+  $('[data-panel=issues]').innerHTML = renderIssues();
+  $('[data-panel=paths]').innerHTML = renderPathsShell();
+  $('[data-panel=links]').innerHTML = renderLinksShell();
+  $('[data-panel=tree]').innerHTML = renderTree();
+  $('[data-panel=json]').innerHTML = renderJson();
+  $('[data-panel=bdf]').innerHTML = renderBdf();
+  bindPanels(); setTab(S.tab, true);
+}
+
+function stLine(kind, text){
+  const el = $('#st-' + kind), card = el.closest('.drop');
+  const has = !!text; card.classList.toggle('has', has);
+  el.className = 'st' + (has ? ' ok' : '');
+  el.innerHTML = has ? ic('ok') + '<span>' + esc(S.names[kind] || '') + '</span>' : '<span class="dim">尚未載入（拖曳或選擇檔案）</span>';
+  return el;
+}
+function renderInputs(){
+  const v = stLine('vvv', S.vvv), t = stLine('tree', S.tree), c = stLine('cfg', S.cfg ? 'x' : '');
+  if (S.vvv) v.innerHTML += '<span class="dim"> · ' + model.list.filter((d) => d.src === 'vvv').length + ' 個裝置</span>';
+  if (S.tree) t.innerHTML += '<span class="dim"> · ' + model.treeRoots.length + ' 個 Root Bus</span>';
+  const m = S.cfgMsg;
+  if (m && (m.errors.length || m.warnings.length)) {
+    c.className = 'st ' + (m.errors.length ? 'bad' : 'warn');
+    c.innerHTML = ic(m.errors.length ? 'bad' : 'warn') + '<span>' + esc((m.errors.concat(m.warnings))[0]) + (m.errors.length + m.warnings.length > 1 ? '（另有 ' + (m.errors.length + m.warnings.length - 1) + ' 項）' : '') + '</span>';
+  } else if (S.cfg) c.innerHTML += '<span class="dim"> · ' + ((S.cfg.devices || []).length) + ' 個預期裝置</span>';
+}
+
+function renderVerdict(){
+  const el = $('#verdict');
+  if (!hasData()) {
+    el.innerHTML = '<div class="vtitle none">' + ic('info') + '等待資料</div><div class="dim">載入 lspci -vvv（與選填的 -tv、設定檔）後會在這裡顯示判定。想先看看效果，按右上角「載入範例」。</div>';
+    return;
+  }
+  if (an.treeOnly) {
+    el.innerHTML = '<div class="vhead"><div class="vtitle none">' + ic('info') + '只載入了 lspci -tv</div><span class="tag">' + model.list.length + ' 個節點</span><span class="tag">' + model.roots.length + ' 個 Root Bus</span></div><div class="note">' + ic('info') + '<span>-tv 只有階層與名稱，沒有 Link 速度/寬度。請再載入 lspci -vvv 才能判斷裝置類型、降速降寬與缺少的裝置；階層可在「拓撲樹」分頁查看。</span></div>';
+    return;
+  }
+  const c = an.sevCount; let cls = 'ok', title;
+  if (c.bad) { cls = 'bad'; title = '發現 ' + c.bad + ' 個嚴重問題' + (c.warn ? '、' + c.warn + ' 個警告' : ''); }
+  else if (c.warn) { cls = 'warn'; title = c.warn + ' 個警告'; }
+  else title = an.hasConfig ? '與設定檔一致，Link 正常' : '未發現異常（尚未比對設定檔）';
+  const cards = P.COUNT_ROLES.filter((r) => !((r === 'storage' || r === 'nvswitch') && !an.counts[r].actual && !an.counts[r].expected)).map((r) => {
+    const k = an.counts[r];
+    const sIcon = k.state === 'ok' ? ic('ok') : k.state === 'bad' ? ic('bad') : k.state === 'warn' ? ic('warn') : '';
+    return '<div class="cnt ' + (k.state === 'na' ? '' : k.state) + '"><div class="l">' + ic(r === 'cpu' ? 'cpu' : ROLE_ICON[r]) + esc(R[r]) + '</div><div class="n">' + k.actual + '</div><div class="e">' + (k.expected != null ? '預期 ' + k.expected : '無預期值') + '</div><span class="s">' + sIcon + '</span></div>';
+  }).join('');
+  let extra = '';
+  if (!an.hasConfig) extra = '<div class="note">' + ic('info') + '<span>沒有設定檔時只能檢查降速/降寬與空槽。載入設定檔才能比對數量、缺少裝置與 BDF 變動。</span><button class="btn sm" type="button" id="btnGenNote">以目前資料產生基準設定檔</button></div>';
+  if (model.denied) extra += '<div class="note warn">' + ic('warn') + '<span>' + model.denied + ' 個裝置顯示 access denied，Link 資訊不完整。請用 <span class="mono">sudo</span> 重新擷取 lspci -vvv。</span></div>';
+  el.innerHTML = '<div class="vhead"><div class="vtitle ' + cls + '">' + ic(cls === 'ok' ? 'ok' : cls === 'warn' ? 'warn' : 'bad') + esc(title) + '</div>' + (S.sample ? '<span class="tag">範例資料（模擬）</span>' : '') + '<span class="tag">' + model.list.length + ' 個 PCI 裝置</span><span class="tag">' + model.roots.length + ' 個 Root Bus</span></div><div class="counts">' + cards + '</div>' + extra;
+  const g = $('#btnGenNote'); if (g) g.addEventListener('click', () => { setTab('json'); genBaseline(); });
+}
+
+/* 槽位圖 */
+function renderSlots(){
+  if (!hasData()) return '<div class="box empty-state">載入 lspci -vvv 後，這裡會依 CPU 分組顯示每個 Switch 與裝置槽位。</div>';
+  const legend = '<div class="legend"><span class="sv-ok">' + ic('ok') + '正常</span><span class="sv-warn">' + ic('warn') + '降速/降寬/有警告</span><span class="sv-bad">' + ic('bad') + '缺少 / Link 斷 / 嚴重降級</span><span class="sv-none">' + ic('empty') + '空槽</span><span class="dim">點裝置可展開細節</span></div>';
+  const cpus = slotMap.map((c) => {
+    const devs = model.list.filter((d) => d.cpu === c.id);
+    const cnt = (r) => devs.filter((d) => (r === 'pcie_switch' ? d.role === 'switch_up' : d.role === r)).length;
+    const meta = ['gpu', 'pcie_switch', 'nic', 'nvme', 'storage', 'nvswitch'].filter((r) => cnt(r)).map((r) => '<span>' + esc(R[r]) + ' <b class="mono">' + cnt(r) + '</b></span>').join('');
+    const groups = c.groups.map((g) => {
+      let head;
+      if (g.type === 'switch') {
+        const l = linkOf(g.up);
+        const nPorts = model.list.filter((d) => d.parent === g.up.bdf).length;
+        head = ic('switch') + '<b>PCIe Switch</b><span class="mono">' + esc(sh(g.up.bdf)) + '</span><span class="dim">' + esc(P.shortName(g.up.name)) + '</span><span class="sp"></span>' + lkBadge(l) + '<span class="dim">' + nPorts + ' 個下游埠</span>';
+      } else head = ic('port') + '<b>Root Port 直連</b><span class="dim">不經 Switch</span>';
+      return '<div class="grp"><div class="grp-h">' + head + '</div><div class="chips">' + (g.chips.length ? g.chips.map(chipHtml).join('') : '<div class="dim" style="padding:4px 2px">（沒有端點裝置）</div>') + '</div></div>';
+    }).join('');
+    const other = c.other.length ? '<div class="grp"><div class="grp-h">' + ic('chip') + '<b>平台 / 其他</b></div><div class="chips">' + c.other.map((d) => '<div class="chip flat">' + ic(ROLE_ICON[d.role]) + '<div><div class="ct">' + esc(P.shortName(d.name) || d.cls) + '</div><div class="cs mono">' + esc(sh(d.bdf)) + ' · ' + esc(d.cls) + '</div></div><span></span></div>').join('') + '</div></div>' : '';
+    return '<section class="cpu"><div class="cpu-h"><div class="nm">' + ic('cpu') + esc(c.id) + '</div><div class="meta"><span>Root Bus <span class="mono">' + c.roots.map((r) => esc(sh(r).slice(-2))).join(' ') + '</span></span>' + (c.numa.length ? '<span>NUMA <span class="mono">' + c.numa.join(',') + '</span></span>' : '') + '<span>歸屬依據：' + esc(c.source) + '</span></div><div class="meta" style="margin-left:auto">' + meta + '</div></div><div class="cpu-b">' + groups + other + '</div></section>';
+  }).join('');
+  return legend + cpus;
+}
+function chipHtml(ch){
+  if (ch.kind === 'empty') {
+    const lost = ch.sev === 'bad';
+    return '<div class="chip flat empty ' + (lost ? 'bad' : '') + '">' + ic(lost ? 'bad' : 'empty') + '<div><div class="ct">' + esc(ch.label) + '</div><div class="cs mono">' + esc(sh(ch.bdf)) + ' 下游埠' + (ch.port && ch.port.slot ? ' · Slot ' + esc(ch.port.slot) : '') + '</div></div><span></span></div>';
+  }
+  if (ch.kind === 'missing') {
+    const p = ch.port; const why = p ? (p.presDet === true ? '上游埠偵測到卡 (PresDet+)，但 Link 未建立' : p.presDet === false ? '上游埠未偵測到卡 (PresDet-)' : '上游埠下沒有裝置') : '連上游埠都不存在';
+    return '<div class="chip flat missing bad">' + ic('bad') + '<div><div class="ct">缺少 ' + esc(ch.label) + '</div><div class="cs mono">預期 ' + esc(sh(ch.bdf)) + '</div><div class="cr sv-bad">' + esc(why) + '</div></div><span class="lk bad">' + esc(R[ch.role] || ch.role) + '</span></div>';
+  }
+  const d = ch.dev, i = ch.link, sev = sevClass(ch.sev);
+  const l2 = i && i.state !== 'unknown' ? (i.state === 'downgraded' ? '最大 ' + P.genText(i.max.gts, i.max.width) + (i.pct != null ? ' · 剩 ' + i.pct + '%' : '') : '') : '';
+  const det = [['BDF', '<span class="mono">' + esc(d.bdf) + '</span>'], ['型號', esc(d.name) + (d.vendorId ? ' <span class="mono dim">[' + d.vendorId + ':' + d.deviceId + ']</span>' : '')], ['上游路徑', '<span class="mono">' + esc(d.path.map(sh).join(' › ') || '—') + '</span>']];
+  if (d.driver) det.push(['驅動', esc(d.driver)]); if (d.slot) det.push(['Slot', esc(d.slot)]); if (d.numa != null) det.push(['NUMA', d.numa]);
+  if (d.cap) det.push(['LnkCap', esc(P.genText(d.cap.gts, d.cap.width))]); if (d.sta) det.push(['LnkSta', esc(P.genText(d.sta.gts, d.sta.width)) + (d.sta.speedFlag === 'downgraded' || d.sta.widthFlag === 'downgraded' ? ' <span class="sv-warn">(lspci 標示 downgraded)</span>' : '')]);
+  if (ch.kind === 'moved') det.unshift(['BDF 變動', '設定檔 <span class="mono">' + esc(sh(P.normBdf(ch.exp.bdf))) + '</span> → 實際 <span class="mono">' + esc(sh(d.bdf)) + '</span>']);
+  const reasons = (an.issues || []).filter((x) => x.bdf === d.bdf && x.sev !== 'info').map((x) => x.detail || x.title);
+  if (reasons.length) det.push(['問題', reasons.map(esc).join('<br>')]);
+  return '<details class="chip ' + (sev === 'ok' ? '' : sev) + '"><summary>' + ic(sev === 'ok' ? ROLE_ICON[d.role] : sev) + '<div><div class="ct">' + esc(nameOf(d)) + '</div><div class="cs"><span class="mono">' + esc(sh(d.bdf)) + '</span>' + (l2 ? ' · ' + esc(l2) : '') + (ch.kind === 'moved' ? ' · <b class="sv-warn">BDF 變動</b>' : '') + '</div></div>' + lkBadge(i) + '</summary><dl class="det">' + det.map((r) => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl></details>';
+}
+
+/* 問題清單 */
+function renderIssues(){
+  if (!hasData()) return '<div class="box empty-state">尚無資料。</div>';
+  const list = an.issues; const f = S.issueFilter || 'all';
+  const shown = list.filter((i) => f === 'all' || i.sev === f);
+  const btn = (k, l, n) => '<button class="btn sm' + (f === k ? ' primary' : '') + '" type="button" data-ifilter="' + k + '">' + l + ' ' + n + '</button>';
+  const c = an.sevCount;
+  const rows = shown.length ? shown.map((i) => '<div class="issue ' + i.sev + '">' + ic(i.sev === 'bad' ? 'bad' : i.sev === 'warn' ? 'warn' : 'info') + '<div><div class="t">' + esc(i.title) + '</div>' + (i.detail ? '<div class="d">' + esc(i.detail) + '</div>' : '') + '</div><div class="cat">' + (i.bdf ? '<span class="tag mono">' + esc(sh(i.bdf)) + '</span> ' : '') + '<span class="tag ' + (i.sev === 'bad' ? 'bad' : i.sev === 'warn' ? 'warn' : '') + '">' + esc(CAT_LABEL[i.cat] || i.cat) + '</span></div></div>').join('') : '<div class="empty-state">' + ic('ok') + ' 這個等級沒有項目</div>';
+  const cfgline = an.hasConfig ? '' : '<div class="note">' + ic('info') + '尚未載入設定檔，這裡只有結構性檢查（降速/降寬、Link 斷、AER）。</div>';
+  return '<div class="ctrls">' + btn('all', '全部', list.length) + btn('bad', '嚴重', c.bad) + btn('warn', '警告', c.warn) + btn('info', '資訊', c.info) + '</div>' + cfgline + '<div class="box">' + rows + '</div>';
+}
+
+/* 路徑 */
+function renderPathsShell(){
+  if (!hasData()) return '<div class="box empty-state">尚無資料。</div>';
+  const f = S.pathFilter || { role:'main', cpu:'all' };
+  const cpuOpts = '<option value="all">全部 CPU</option>' + slotMap.map((c) => '<option value="' + esc(c.id) + '"' + (f.cpu === c.id ? ' selected' : '') + '>' + esc(c.id) + '</option>').join('');
+  const roleOpts = [['main','主要裝置 (GPU/NIC/NVMe/儲存)'],['gpu','GPU'],['nic','NIC'],['nvme','NVMe'],['switch','Switch 上游埠'],['all','全部']].map((r) => '<option value="' + r[0] + '"' + (f.role === r[0] ? ' selected' : '') + '>' + r[1] + '</option>').join('');
+  return '<div class="ctrls"><label>CPU <select id="pf-cpu">' + cpuOpts + '</select></label><label>類型 <select id="pf-role">' + roleOpts + '</select></label><span class="dim">路徑 = CPU › Root Bus › Root Port › Switch 上/下游埠 › 裝置；顏色代表該節點有警告或錯誤。</span></div><div id="pathBody">' + pathTable() + '</div>';
+}
+function hop(label, bdf, cls, text, q){ const qq = q && bdf; return '<span class="hop ' + (cls || '') + (qq ? ' hopq' : '') + '"' + (qq ? ' data-bdf="' + esc(bdf) + '" title="查詢 ' + esc(bdf) + '"' : '') + '><i>' + esc(label) + '</i>' + (bdf ? '<span class="mono">' + esc(sh(bdf)) + '</span>' : '') + (text ? esc(text) : '') + '</span>'; }
+function pathTable(){
+  const f = S.pathFilter || { role:'main', cpu:'all' };
+  const want = (d) => f.role === 'all' ? !['host_bridge'].includes(d.role) : f.role === 'main' ? P.ENDPOINT_ROLES.includes(d.role) : f.role === 'switch' ? d.role === 'switch_up' : d.role === f.role;
+  const rows = [];
+  model.list.filter((d) => want(d) && (f.cpu === 'all' || d.cpu === f.cpu)).forEach((d) => {
+    const chain = [hop('CPU', null, 'cpu', d.cpu || '?'), hop('Root Bus', d.root)];
+    d.path.forEach((b) => { const a = model.byBdf.get(b); chain.push(hop(HOP_LABEL[a.role] || a.role, b, sevClass(an.sevByBdf[b]))); });
+    chain.push(hop(R[d.cfgRole] || d.role, d.bdf, sevClass(an.sevByBdf[d.bdf])));
+    rows.push({ d, sev: sevClass(an.sevByBdf[d.bdf]), html: '<td><div class="ct" style="font-weight:500">' + ic(ROLE_ICON[d.role]) + ' ' + esc(nameOf(d)) + '</div><div class="dim mono" style="font-size:12px">' + esc(sh(d.bdf)) + '</div></td><td><div class="hops">' + chain.join('<span class="arrow">›</span>') + '</div></td><td>' + lkBadge(linkOf(d)) + '</td>' });
+  });
+  (an.expRes || []).filter((r) => r.state === 'missing' && (f.role === 'all' || f.role === 'main' || f.role === r.exp.role || (f.role === 'switch' && r.exp.role === 'pcie_switch')) && (f.cpu === 'all' || r.exp.cpu === f.cpu || (r.port && model.byBdf.get(r.port) && model.byBdf.get(r.port).cpu === f.cpu))).forEach((r) => {
+    const port = r.port ? model.byBdf.get(r.port) : null; const cpuId = (port && port.cpu) || r.exp.cpu || '?';
+    const chain = [hop('CPU', null, 'cpu', cpuId)];
+    if (port) { chain.push(hop('Root Bus', port.root)); port.path.forEach((b) => chain.push(hop(HOP_LABEL[model.byBdf.get(b).role] || '', b, sevClass(an.sevByBdf[b])))); chain.push(hop(HOP_LABEL[port.role] || '', port.bdf, 'bad')); }
+    chain.push(hop('缺少', r.exp.bdfN, 'bad miss', ' ' + (r.exp.name || '')));
+    rows.push({ sev: 'bad', html: '<td><div style="font-weight:500">' + ic('bad') + ' ' + esc(r.exp.name || r.exp.bdf) + '</div><div class="dim mono" style="font-size:12px">預期 ' + esc(sh(r.exp.bdfN)) + '</div></td><td><div class="hops">' + chain.join('<span class="arrow">›</span>') + '</div></td><td><span class="lk bad">缺少</span></td>' });
+  });
+  if (!rows.length) return '<div class="box empty-state">沒有符合條件的裝置。</div>';
+  return '<div class="tablewrap"><table><thead><tr><th>裝置</th><th>BDF 路徑</th><th>Link</th></tr></thead><tbody>' + rows.map((r) => '<tr class="' + (r.sev === 'ok' ? '' : r.sev) + '">' + r.html + '</tr>').join('') + '</tbody></table></div>';
+}
+
+/* Link 狀態 */
+function renderLinksShell(){
+  if (!hasData()) return '<div class="box empty-state">尚無資料。</div>';
+  const f = S.linkFilter || { only:false, role:'all' };
+  return '<div class="ctrls"><label><input type="checkbox" id="lf-only"' + (f.only ? ' checked' : '') + '> 只顯示異常</label><label>類型 <select id="lf-role">' + [['all','全部'],['gpu','GPU'],['nic','NIC'],['nvme','NVMe'],['storage','儲存'],['pcie_switch','Switch 上游埠']].map((r) => '<option value="' + r[0] + '"' + (f.role === r[0] ? ' selected' : '') + '>' + r[1] + '</option>').join('') + '</select></label><span class="dim">最大值取「裝置」與「上游埠」兩端 LnkCap 的較小者；目前值來自 LnkSta。</span></div><div id="linkBody">' + linkTable() + '</div>';
+}
+function expectedFor(d){
+  const ex = (an.expRes || []).find((r) => r.actual && r.actual.bdf === d.bdf);
+  const rule = (ex && ex.exp.link) || (S.cfg && S.cfg.link_rules && S.cfg.link_rules[d.cfgRole]) || null;
+  if (!rule) return null;
+  const g = rule.gen != null ? rule.gen : P.genOf(rule.gts);
+  return { gen: g, width: rule.width };
+}
+function linkTable(){
+  const f = S.linkFilter || { only:false, role:'all' };
+  const order = { down:0, downgraded:1, limited:2, ok:3, unknown:4 };
+  let ls = model.links.filter((l) => l.child || true).slice();
+  ls = ls.filter((l) => { const r = l.child ? l.child.cfgRole : null; return f.role === 'all' || r === f.role; });
+  ls = ls.filter((l) => !f.only || (l.child ? (['down', 'downgraded'].includes(l.info.state) || (l.cfgMiss && l.cfgMiss.length)) : l.parent.presDet === true));
+  ls.sort((a, b) => (order[a.info.state] - order[b.info.state]) || ((a.child || a.parent).bdf < (b.child || b.parent).bdf ? -1 : 1));
+  if (!ls.length) return '<div class="box empty-state">' + (f.only ? ic('ok') + ' 沒有降速/降寬的 Link' : '沒有 Link 資料（需要 lspci -vvv 並以 root 執行）') + '</div>';
+  const rows = ls.map((l) => {
+    const i = l.info, c = l.child, p = l.parent;
+    if (!c) return '<tr class="' + (i.state === 'down' ? '' : '') + '"><td>' + (i.state === 'unknown' ? '' : '<span class="lk">空埠</span>') + '</td><td><span class="mono">' + esc(sh(p.bdf)) + '</span> <span class="dim">› （空）</span></td><td class="dim">' + esc(R[p.role]) + '</td><td>' + esc(p.cpu || '') + '</td><td class="mono">' + (p.cap ? esc(P.genText(p.cap.gts, p.cap.width)) : '—') + '</td><td>' + (p.presDet === true ? '<span class="lk bad">PresDet+ 無 Link</span>' : '<span class="lk">未偵測到卡</span>') + '</td><td></td><td></td></tr>';
+    const exp = expectedFor(c); const sev = i.state === 'down' ? 'bad' : i.state === 'downgraded' ? (i.pct != null && i.pct <= 50 ? 'bad' : 'warn') : (l.cfgMiss && l.cfgMiss.length ? 'warn' : '');
+    const stTxt = i.state === 'unknown' ? '—' : i.state === 'down' ? '斷線' : i.state === 'downgraded' ? ((i.spdDown ? '降速' : '') + (i.spdDown && i.widDown ? ' + ' : '') + (i.widDown ? '降寬' : '')) : i.state === 'limited' ? '受對端限制' : '正常';
+    const stIc = sev === 'bad' ? ic('bad') : sev === 'warn' ? ic('warn') : i.state === 'ok' ? ic('ok') : i.state === 'limited' ? ic('info') : '';
+    const cur = i.cur ? '<span class="mono"><b>' + esc(P.genText(i.cur.gts, i.cur.width)) + '</b> <span class="dim">' + i.cur.gts + 'GT/s</span></span>' : '—';
+    const mx = i.max ? '<span class="mono">' + esc(P.genText(i.max.gts, i.max.width)) + '</span>' + (i.peer && (i.peer.gts !== i.own.gts || i.peer.width !== i.own.width) ? '<div class="dim" style="font-size:11.5px">裝置 ' + esc(P.genText(i.own.gts, i.own.width)) + ' / 上游埠 ' + esc(P.genText(i.peer.gts, i.peer.width)) + '</div>' : '') : '—';
+    const pc = i.pct != null ? '<span class="pctbar ' + (i.pct <= 50 ? 'bad' : i.pct < 100 ? 'warn' : '') + '"><b style="width:' + Math.min(100, i.pct) + '%"></b></span><span class="mono">' + i.pct + '%</span>' + (i.curBw ? '<div class="dim mono" style="font-size:11.5px">' + i.curBw.toFixed(1) + ' / ' + i.maxBw.toFixed(1) + ' GB/s</div>' : '') : '—';
+    return '<tr class="' + sev + '"><td style="white-space:nowrap" class="sv-' + (sev || 'ok') + '">' + stIc + ' ' + stTxt + '</td><td><div style="font-weight:500">' + esc(nameOf(c)) + '</div><div class="mono dim" style="font-size:12px">' + (p ? esc(sh(p.bdf)) + ' › ' : '') + esc(sh(c.bdf)) + '</div></td><td class="dim">' + esc(R[c.cfgRole] || c.role) + '</td><td>' + esc(c.cpu || '') + '</td><td>' + mx + '</td><td>' + cur + '</td><td class="mono">' + (exp ? esc((exp.gen ? 'Gen' + exp.gen : '') + ' x' + (exp.width == null ? '?' : exp.width)) : '<span class="dim">—</span>') + '</td><td style="white-space:nowrap">' + pc + '</td></tr>';
+  }).join('');
+  return '<div class="tablewrap"><table><thead><tr><th>狀態</th><th>裝置（上游埠 › 裝置）</th><th>類型</th><th>CPU</th><th>最大 (Cap)</th><th>目前 (Sta)</th><th>設定檔期望</th><th>頻寬</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+/* 拓撲樹 */
+function renderTree(){
+  if (!hasData()) return '<div class="box empty-state">尚無資料。</div>';
+  const missingBy = {}; (an.expRes || []).forEach((r) => { if (r.state === 'missing' && r.port) (missingBy[r.port] = missingBy[r.port] || []).push(r); });
+  function node(d){
+    const i = linkOf(d), sev = sevClass(an.sevByBdf[d.bdf]);
+    const row = '<span class="tn ' + (sev === 'ok' ? '' : sev) + '">' + ic(ROLE_ICON[d.role]) + '<span class="mono">' + esc(sh(d.bdf)) + '</span><span class="rl">' + esc(roleName(d)) + '</span><span class="nm">' + esc(nameOf(d)) + '</span>' + (i ? lkBadge(i) : '') + (sev !== 'ok' ? ic(sev) : '') + '</span>';
+    let kids = d.children.map(node).join('');
+    (missingBy[d.bdf] || []).forEach((r) => { kids += '<div class="tleaf"><span class="tn miss">' + ic('bad') + '<span class="mono">' + esc(sh(r.exp.bdfN)) + '</span><span class="rl">缺少</span><span class="nm">' + esc(r.exp.name || '') + '</span></span></div>'; });
+    if (!d.children.length && !(missingBy[d.bdf] || []).length && (d.role === 'root_port' || d.role === 'switch_down') && d.sec > 0) kids += '<div class="tleaf"><span class="tn ep">' + ic('empty') + '<span class="nm">' + (d.presDet === true ? '有卡但 Link 未建立' : '空槽') + '</span></span></div>';
+    return kids ? '<details class="tnode" open><summary>' + row + '</summary><div class="tkids">' + kids + '</div></details>' : '<div class="tleaf">' + row + '</div>';
+  }
+  const top = model.list.filter((d) => !d.parent);
+  const body = slotMap.map((c) => '<section class="tcpu"><div class="tcpu-h">' + ic('cpu') + esc(c.id) + '</div>' + c.roots.map((rk) => '<div class="troot-h mono">Root Bus ' + esc(rk) + '</div>' + top.filter((d) => d.root === rk).map(node).join('')).join('') + '</section>').join('');
+  return '<div class="ctrls"><button class="btn sm" type="button" id="expAll">全部展開</button><button class="btn sm" type="button" id="colAll">全部收合</button><span class="dim">階層來源：' + (model.hasTree ? 'lspci -tv' : '由 -vvv 的 Bus primary/secondary/subordinate 推算') + '</span></div>' + body;
+}
+
+/* JSON */
+const SCHEMA_ROWS = [
+  ['schema', 'string', '必填', '固定為 "pcie-topology-config/1"，用來辨識格式版本。'],
+  ['meta', 'object', '選填', 'platform（機種名稱）、description、generated_at、source，只做說明，不參與比對。'],
+  ['expected_counts', 'object', '建議', '各類裝置的預期總數：cpu、gpu、pcie_switch、nic、nvme、storage、nvswitch（整數）。pcie_switch 以 Switch 上游埠計。'],
+  ['link_rules', 'object', '建議', '依類型設定預期的最低協商 Link，例如 "gpu": {"gen": 5, "width": 16}。單一裝置沒有自己的 link 時使用。'],
+  ['cpus[]', 'array', '建議', '每顆 CPU 一筆：id（如 "CPU0"）、numa_nodes（整數陣列）、root_buses（如 ["0000:15","3a"]）、可選 expected_counts。這是 CPU 與 BDF 的對照依據。'],
+  ['devices[]', 'array', '建議', '預期出現的裝置清單，每個裝置一筆（下列欄位）。'],
+  ['devices[].name', 'string', '建議', '人看的名稱，如 "GPU3"，會顯示在槽位圖。'],
+  ['devices[].role', 'string', '必填', 'gpu / nic / nvme / storage / nvswitch / pcie_switch / bmc_vga / other。'],
+  ['devices[].bdf', 'string', '必填', '預期的 BDF，如 "0000:3e:00.0"（可省略 domain）。pcie_switch 填上游埠的 BDF。'],
+  ['devices[].cpu', 'string', '選填', '預期掛在哪顆 CPU（對應 cpus[].id），不同會回報。'],
+  ['devices[].parent_bdf', 'string', '選填', '預期的上游 Port（Root Port 或 Switch 下游埠），可用來指出缺少的裝置原本在哪個槽。'],
+  ['devices[].vendor_id / device_id', 'string', '選填', '16 進位，如 "10de" / "2331"；需要 lspci -nn。BDF 變動時也用它找回裝置。'],
+  ['devices[].slot', 'string', '選填', '實體槽位標示，僅供顯示。'],
+  ['devices[].link', 'object', '建議', '預期協商結果 {"gen": 5, "width": 16}；低於這個值就回報。'],
+  ['devices[].required', 'boolean', '選填', '預設 true。']
+];
+function renderJson(){
+  const msgs = S.cfgMsg ? '<div class="msgs">' + S.cfgMsg.errors.map((e) => '<div class="e">' + ic('bad') + ' ' + esc(e) + '</div>').join('') + S.cfgMsg.warnings.map((e) => '<div class="w">' + ic('warn') + ' ' + esc(e) + '</div>').join('') + (!S.cfgMsg.errors.length && !S.cfgMsg.warnings.length ? '<div class="o">' + ic('ok') + ' 格式檢查通過</div>' : '') + '</div>' : '';
+  const warnBase = hasData() && an.sevCount.bad + an.sevCount.warn > 0 ? '<div class="note warn">' + ic('warn') + '<span>目前資料有 ' + (an.sevCount.bad + an.sevCount.warn) + ' 個問題。請確認這份資料來自「已知正常」的機器，再把它當基準，否則故障會被寫進設定檔。</span></div>' : '';
+  const sample = JSON.stringify({ schema:'pcie-topology-config/1', meta:{ platform:'MyServer-2U', description:'2 CPU / 8 GPU' }, expected_counts:{ cpu:2, gpu:8, pcie_switch:4, nic:4, nvme:8 }, link_rules:{ gpu:{ gen:5, width:16 }, nvme:{ gen:4, width:4 } }, cpus:[{ id:'CPU0', numa_nodes:[0], root_buses:['0000:15','0000:3a'] }, { id:'CPU1', numa_nodes:[1], root_buses:['0000:97','0000:ae'] }], devices:[{ name:'GPU0', role:'gpu', bdf:'0000:18:00.0', cpu:'CPU0', parent_bdf:'0000:17:00.0', vendor_id:'10de', device_id:'2331', link:{ gen:5, width:16 }, required:true }] }, null, 2);
+  return '<h2 class="sec">編輯 / 產生設定檔</h2><div class="cfgbox"><div class="ctrls"><label>機種名稱 <input type="text" id="platformName" value="' + esc(S.platform || '') + '" placeholder="例如 MyServer-2U"></label><button class="btn sm" type="button" id="btnGen">' + ic('file') + '從目前資料產生基準 JSON</button><button class="btn sm" type="button" id="btnApplyCfg">套用此 JSON</button><button class="btn sm" type="button" id="btnCopy">複製</button><button class="btn sm" type="button" id="btnSave" hidden>儲存為檔案</button></div>' + warnBase + '<textarea id="cfgText" spellcheck="false" placeholder="尚未載入設定檔。可貼上 JSON，或按「從目前資料產生基準 JSON」。">' + esc(S.cfgText) + '</textarea>' + msgs + '</div>' +
+    '<h2 class="sec">設定檔要包含什麼</h2><div class="tablewrap"><table class="schema"><thead><tr><th>欄位</th><th>型別</th><th>需求</th><th>說明</th></tr></thead><tbody>' + SCHEMA_ROWS.map((r) => '<tr><td>' + esc(r[0]) + '</td><td class="dim">' + r[1] + '</td><td>' + r[2] + '</td><td>' + esc(r[3]) + '</td></tr>').join('') + '</tbody></table></div>' +
+    '<h2 class="sec">比對規則</h2><div class="box" style="padding:10px 14px"><ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px"><li>expected_counts 與實際數量不同 → 「數量不符」（少於預期為嚴重）。</li><li>devices[] 的 BDF 找不到 → 「缺少」；同類型、同 ID 的裝置出現在別的 BDF → 「BDF 變動」；設定檔沒列的 GPU / NIC / NVMe / Switch → 「多出裝置」。</li><li>實際 Link 低於 devices[].link 或 link_rules → 「低於設定檔」。即使沒有設定檔，也會比對 LnkCap 與 LnkSta 找出降速降寬。</li><li>cpus[] 的 root_buses / numa_nodes 決定裝置屬於哪顆 CPU；沒有時依 lspci 的 NUMA node 推算，再不行就依 Bus 編號推測並標示。</li></ul></div>' +
+    '<h2 class="sec">最小範例</h2><pre class="cmd">' + esc(sample) + '</pre>';
+}
+function genBaseline(){
+  if (!hasData()) { toast('請先載入 lspci -vvv'); return; }
+  const cfg = P.buildBaseline(model, an, { platform: S.platform || '' });
+  S.cfgText = JSON.stringify(cfg, null, 2); S.cfgMsg = P.validateConfig(cfg);
+  const ta = $('#cfgText'); if (ta) ta.value = S.cfgText;
+  render(); toast('已產生基準 JSON，可複製、儲存，或按「套用此 JSON」立即比對');
+}
+let downloads = null;
+(async () => { try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { downloads = null; } const b = $('#btnSave'); if (b && downloads) b.hidden = false; })();
+
+/* ---------- 綁定 ---------- */
+function bindPanels(){
+  $$('[data-ifilter]').forEach((b) => b.addEventListener('click', () => { S.issueFilter = b.dataset.ifilter; $('[data-panel=issues]').innerHTML = renderIssues(); bindPanels(); }));
+  const pc = $('#pf-cpu'), pr = $('#pf-role');
+  if (pc) { const up = () => { S.pathFilter = { cpu: pc.value, role: pr.value }; $('#pathBody').innerHTML = pathTable(); }; pc.addEventListener('change', up); pr.addEventListener('change', up); }
+  const lo = $('#lf-only'), lr = $('#lf-role');
+  if (lo) { const up = () => { S.linkFilter = { only: lo.checked, role: lr.value }; $('#linkBody').innerHTML = linkTable(); }; lo.addEventListener('change', up); lr.addEventListener('change', up); }
+  const ea = $('#expAll'), ca = $('#colAll');
+  if (ea) { ea.addEventListener('click', () => $$('.tnode').forEach((d) => { d.open = true; })); ca.addEventListener('click', () => $$('.tnode').forEach((d) => { d.open = false; })); }
+  const pn = $('#platformName'); if (pn) pn.addEventListener('input', () => { S.platform = pn.value; });
+  const g = $('#btnGen'); if (g) g.addEventListener('click', genBaseline);
+  const a = $('#btnApplyCfg'); if (a) a.addEventListener('click', () => { const t = $('#cfgText').value; if (!t.trim()) { toast('沒有內容'); return; } setSlot('cfg', t, '編輯中的 JSON'); });
+  const cp = $('#btnCopy'); if (cp) cp.addEventListener('click', async () => { const ta = $('#cfgText'); try { await navigator.clipboard.writeText(ta.value); toast('已複製'); } catch (e) { ta.select(); toast('請按 Ctrl/Cmd+C 複製'); } });
+  const sv = $('#btnSave'); if (sv) { sv.hidden = !downloads; sv.addEventListener('click', async () => { const t = $('#cfgText').value; if (!t.trim()) { toast('沒有內容'); return; } try { await downloads.save({ filename: 'pcie-topology-config.json', data: t }); toast('已儲存'); } catch (e) { if (!e || e.code !== 'declined') toast('無法儲存，請改用複製'); } }); }
+}
+
+/* ---------- 分頁 ---------- */
+function setTab(t, silent){
+  S.tab = t;
+  $$('#tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === t ? 'true' : 'false'));
+  $$('#panels [data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== t; });
+  if (!silent) { try { localStorage.setItem('pcie-tab', t); } catch (e) {} }
+}
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
+try { const t = localStorage.getItem('pcie-tab'); if (t && $('#tabs [data-tab="' + t + '"]')) S.tab = t; } catch (e) {}
+$$('#tabs button').forEach((b) => b.setAttribute('role', 'tab'));
+
+
+/* ---------- BDF 查詢 ---------- */
+function bdfSearch(q){
+  const toks = q.toLowerCase().split(/[\s,;]+/).filter(Boolean);
+  const hits = new Map(), missing = [], partial = new Set(); let missSeen = new Set();
+  toks.forEach((t) => {
+    const tt = t.replace(/\.\*$/, '').replace(/:\*$/, '');
+    const hexish = /^[0-9a-f]{1,4}(?::[0-9a-f]{0,4}){0,2}(?:\.[0-7]?)?$/.test(tt);
+    const first = tt.split(':')[0];
+    const useFull = tt.includes(':') && first.length === 4;
+    const key = (b) => (useFull ? b : b.slice(5));
+    let hit = []; const m0 = missing.length;
+    if (hexish) {
+      hit = model.list.filter((d) => key(d.bdf).startsWith(tt));
+      if (!hit.length) { hit = model.list.filter((d) => d.bdf.slice(5).includes(tt)); hit.forEach((d) => partial.add(d.bdf)); }
+      (an.expRes || []).forEach((r) => { if (r.state === 'missing' && r.exp.bdfN && key(r.exp.bdfN).startsWith(tt) && !missSeen.has(r.exp.bdfN)) { missSeen.add(r.exp.bdfN); missing.push(r); } });
+    }
+    if (!hit.length && missing.length === m0) {
+      hit = model.list.filter((d) => [d.name, d.cls, d.driver, d.slot, d.vendorId ? d.vendorId + ':' + d.deviceId : '', R[d.role]].some((v) => v && String(v).toLowerCase().includes(t)));
+    }
+    hit.forEach((d) => hits.set(d.bdf, d));
+  });
+  return { list: [...hits.values()].sort((a, b) => (a.bdf < b.bdf ? -1 : 1)), missing, partial };
+}
+const lnTxt = (x) => (x && x.gts != null ? P.genText(x.gts, x.width) + ' <span class="dim">(' + x.gts + 'GT/s)</span>' : x ? '— <span class="dim">(x' + x.width + ')</span>' : '—');
+const qlink = (b, txt) => '<button type="button" class="qlink" data-bdf="' + esc(b) + '">' + esc(txt || sh(b)) + '</button>';
+function bdfCard(d, open, rawOpen){
+  const sev = sevClass(an.sevByBdf[d.bdf]); const i = linkOf(d);
+  const badge = i ? lkBadge(i) : (d.sta ? '<span class="lk">' + esc(P.genText(d.sta.gts, d.sta.width)) + '</span>' : '');
+  const head = '<summary>' + ic(sev === 'ok' ? (ROLE_ICON[d.role] || 'chip') : sev) + '<span class="mono" style="font-weight:600">' + esc(sh(d.bdf)) + '</span><span>' + esc(nameOf(d)) + '</span><span class="tag">' + esc(roleName(d)) + '</span>' + (d.cpu ? '<span class="tag">' + esc(d.cpu) + '</span>' : '') + '<span class="sp"></span>' + badge + '</summary>';
+  const kv = [];
+  kv.push(['型號', esc(d.name || '—') + (d.vendorId ? ' <span class="mono dim">[' + d.vendorId + ':' + d.deviceId + ']</span>' : '')]);
+  kv.push(['類別', esc(d.cls || '—') + (d.classCode ? ' <span class="mono dim">[' + esc(d.classCode) + ']</span>' : '')]);
+  if (d.driver) kv.push(['驅動', esc(d.driver)]);
+  if (d.slot) kv.push(['Slot', esc(d.slot)]);
+  if (d.numa != null) kv.push(['NUMA', d.numa]);
+  if (d.sec != null) kv.push(['Bus', '<span class="mono">secondary ' + P.hex2(d.sec) + ' · subordinate ' + P.hex2(d.sub) + '</span>']);
+  if (d.expType) kv.push(['PCIe 類型', esc(d.expType)]);
+  if (d.cap) kv.push(['LnkCap', lnTxt(d.cap)]);
+  if (d.sta) kv.push(['LnkSta', lnTxt(d.sta) + (d.sta.speedFlag === 'downgraded' || d.sta.widthFlag === 'downgraded' ? ' <span class="sv-warn">(lspci 標示 downgraded)</span>' : '')]);
+  if (d.targetGts != null) kv.push(['Target Speed', d.targetGts + ' GT/s']);
+  if (d.presDet != null) kv.push(['PresDet', d.presDet ? '+（偵測到卡）' : '−（未偵測到卡）']);
+  if (d.aerUE && d.aerUE.length) kv.push(['AER UESta', '<span class="sv-bad">' + esc(d.aerUE.join(', ')) + '</span>']);
+  if (d.aerCE && d.aerCE.length) kv.push(['AER CESta', '<span class="sv-warn">' + esc(d.aerCE.join(', ')) + '</span>']);
+  const ex = (an.expRes || []).find((r) => r.actual && r.actual.bdf === d.bdf);
+  if (ex) {
+    const e = ex.exp;
+    kv.push(['設定檔', esc(e.name || '') + ' · 預期 <span class="mono">' + esc(sh(P.normBdf(e.bdf) || e.bdf)) + '</span>' + (e.link ? ' · 預期 ' + esc(P.genText(P.GEN_GTS[e.link.gen], e.link.width)) : '') + (ex.state === 'moved' ? ' <span class="sv-warn">（BDF 已變動）</span>' : '')]);
+  } else if (an.hasConfig && ['gpu', 'nic', 'nvme', 'storage', 'nvswitch'].includes(d.cfgRole)) kv.push(['設定檔', '<span class="sv-warn">設定檔沒有列這個裝置</span>']);
+  const iss = (an.issues || []).filter((x) => x.bdf === d.bdf);
+  if (iss.length) kv.push(['問題', iss.map((x) => '<div class="sv-' + (x.sev === 'bad' ? 'bad' : x.sev === 'warn' ? 'warn' : 'none') + '">' + esc(x.title) + (x.detail ? '：' + esc(x.detail) : '') + '</div>').join('')]);
+  const chain = [hop('CPU', null, 'cpu', d.cpu || '?'), hop('Root Bus', d.root)];
+  (d.path || []).forEach((b) => { const a = model.byBdf.get(b); chain.push(hop(HOP_LABEL[a.role] || a.role, b, sevClass(an.sevByBdf[b]), '', true)); });
+  chain.push(hop(R[d.cfgRole] || d.role, d.bdf, sevClass(an.sevByBdf[d.bdf])));
+  const kids = (d.children || []);
+  const kidsHtml = kids.length ? '<div><h4>下游裝置 (' + kids.length + ')</h4><div class="ctrls">' + kids.map((c) => '<span>' + qlink(c.bdf) + ' <span class="dim">' + esc(nameOf(c)) + '</span></span>').join('') + '</div></div>' : '';
+  const nLines = d.raw ? d.raw.split('\n').length : 0;
+  const rawHtml = d.raw
+    ? '<details class="rawbox"' + (rawOpen ? ' open' : '') + '><summary>lspci -vvv 原始內容（' + nLines + ' 行）</summary><div class="ctrls" style="margin-bottom:6px"><button class="btn sm" type="button" data-copyraw="' + esc(d.bdf) + '">複製原始內容</button></div><pre class="raw">' + esc(d.raw) + '</pre></details>'
+    : '<div class="dim">這個裝置只出現在 lspci -tv，沒有 -vvv 原始內容。</div>';
+  return '<details class="bres ' + (sev === 'ok' ? '' : sev) + '"' + (open ? ' open' : '') + '>' + head + '<div class="bd"><dl class="kv">' + kv.map((r) => '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>').join('') + '</dl><div><h4>CPU → 裝置路徑（可點擊上游節點）</h4><div class="hops">' + chain.join('<span class="arrow">›</span>') + '</div></div>' + kidsHtml + rawHtml + '</div></details>';
+}
+function renderBdf(){
+  if (!hasData()) return '<div class="box empty-state">載入 lspci -vvv 後，可在右上角搜尋框輸入 BDF，查看該裝置的完整內容。</div>';
+  const q = (S.bdfQ || '').trim();
+  if (!q) {
+    const ex = model.list.filter((d) => P.ENDPOINT_ROLES.includes(d.role)).slice(0, 5);
+    return '<div class="box empty-state"><div>' + ic('info') + ' 在右上角搜尋框輸入 BDF，這裡會顯示該裝置的型號、Link、上游路徑與 lspci -vvv 原始內容。</div><div class="dim" style="margin-top:6px">支援完整 BDF（<span class="mono">0000:1a:00.0</span>）、省略 domain（<span class="mono">1a:00.0</span>）、前綴（<span class="mono">1a</span>、<span class="mono">1a:00</span>）、多個以空白或逗號分隔，也可輸入型號/驅動關鍵字。</div>' +
+      (ex.length ? '<div class="ctrls" style="justify-content:center;margin-top:10px"><span class="dim">試試：</span>' + ex.map((d) => qlink(d.bdf)).join('') + '</div>' : '') + '</div>';
+  }
+  const r = bdfSearch(q); const CAP = 40;
+  if (!r.list.length && !r.missing.length) return '<div class="box empty-state">' + ic('empty') + ' 找不到符合「' + esc(q) + '」的裝置。<div class="dim" style="margin-top:4px">共 ' + model.list.length + ' 個裝置；BDF 請用 16 進位，例如 <span class="mono">1a:00.0</span>。</div></div>';
+  const shown = r.list.slice(0, CAP);
+  const many = shown.length > 3;
+  const sum = '<div class="bsum">' + (r.list.length ? '找到 <b>' + r.list.length + '</b> 個裝置' : '沒有符合的實際裝置') + (r.partial.size ? '（沒有前綴相符，改以部分字串比對）' : '') + (r.list.length > CAP ? '，只顯示前 ' + CAP + ' 筆，請縮小條件' : '') + (r.missing.length ? '，另有 ' + r.missing.length + ' 個設定檔預期但缺少的 BDF' : '') + '</div>';
+  const miss = r.missing.map((m) => {
+    const port = m.port ? model.byBdf.get(m.port) : null;
+    return '<div class="box" style="padding:10px 14px"><span class="sv-bad">' + ic('bad') + ' 缺少 ' + esc(m.exp.name || m.exp.bdf) + '</span> 設定檔預期 <span class="mono">' + esc(sh(m.exp.bdfN)) + '</span> 有 ' + esc(R[m.exp.role] || m.exp.role) + '，但實際找不到。' + (port ? ' 上游埠 ' + qlink(port.bdf) + (port.presDet === true ? ' 偵測到有卡 (PresDet+) 但 Link 未建立。' : port.presDet === false ? ' 未偵測到卡 (PresDet−)。' : '。') : '') + '</div>';
+  }).join('');
+  return sum + miss + shown.map((d) => bdfCard(d, !many, shown.length === 1)).join('');
+}
+function setBdfQuery(v){
+  S.bdfQ = v; const inp = $('#bdfQuick'); if (inp && inp.value !== v) inp.value = v;
+  if (S.tab !== 'bdf') setTab('bdf', true);
+  if (hasData()) $('[data-panel=bdf]').innerHTML = renderBdf();
+}
+(function bindBdf(){
+  const inp = $('#bdfQuick'); const panel = $('[data-panel=bdf]');
+  inp.addEventListener('input', () => setBdfQuery(inp.value));
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') { inp.value = ''; setBdfQuery(''); inp.blur(); } });
+  panel.addEventListener('click', async (e) => {
+    const q = e.target.closest('[data-bdf]');
+    if (q) { e.preventDefault(); setBdfQuery(q.dataset.bdf); window.scrollTo({ top: panel.getBoundingClientRect().top + window.scrollY - 70, behavior: 'smooth' }); return; }
+    const c = e.target.closest('[data-copyraw]');
+    if (c) { const d = model.byBdf.get(c.dataset.copyraw); if (!d || !d.raw) return; try { await navigator.clipboard.writeText(d.raw); toast('已複製 ' + sh(d.bdf) + ' 的原始內容'); } catch (err) { const pre = c.closest('.rawbox').querySelector('pre'); const rg = document.createRange(); rg.selectNodeContents(pre); const se = window.getSelection(); se.removeAllRanges(); se.addRange(rg); toast('請按 Ctrl/Cmd+C 複製'); } }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = document.activeElement && document.activeElement.tagName;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(t)) return;
+    e.preventDefault(); inp.focus(); inp.select();
+  });
+})();
+
+loadSample();
+window.__pcie = { S, recompute, bdfSearch, setBdfQuery, setSlot, loadSample, render, get model(){ return model; }, get an(){ return an; } };
+})();
+</script>
+
+</body></html>
