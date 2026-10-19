@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>MB CPLD Register Decoder</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', monospace; background: #1a1a2e; color: #eee; padding: 20px; }
+h1 { color: #76b900; margin-bottom: 10px; padding-right: 180px; }
+.subtitle { color: #aaa; margin-bottom: 20px; font-size: 14px; padding-right: 180px; }
+.debug-code { position: fixed; top: 16px; right: 20px; z-index: 10; min-width: 150px; padding: 8px 12px; background: #16213e; border: 1px solid #76b900; border-radius: 4px; text-align: center; }
+.debug-code-label { display: block; color: #aaa; font-size: 11px; }
+.debug-code-value { color: #76b900; font-size: 24px; font-weight: bold; }
+textarea { width: 100%; height: 180px; background: #16213e; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; font-size: 13px; border-radius: 4px; }
+button { background: #76b900; color: #000; border: none; padding: 10px 24px; font-weight: bold; cursor: pointer; border-radius: 4px; margin: 10px 0; font-size: 14px; }
+button:hover { background: #5a9e00; }
+#output { margin-top: 20px; }
+.reg-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; font-size: 12px; }
+.reg-table th, .reg-table td { border: 1px solid #333; padding: 3px 6px; text-align: center; }
+.reg-table th { background: #0e4429; color: #76b900; }
+.reg-header { background: #16213e; font-weight: bold; color: #76b900; padding: 6px 10px; margin-top: 12px; border-left: 4px solid #76b900; }
+.bit-1 { background: #1b4332; color: #2ecc71; font-weight: bold; }
+.bit-0 { background: #2c1810; color: #e74c3c; }
+.bit-na { background: #222; color: #666; }
+.filter-bar { margin: 10px 0; }
+.filter-bar input { background: #16213e; color: #eee; border: 1px solid #444; padding: 6px 10px; width: 300px; border-radius: 4px; }
+.filter-bar label { margin-left: 16px; color: #aaa; font-size: 13px; }
+.summary { background: #16213e; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>MB CPLD Register Decoder</h1>
+<p class="subtitle">MB | Slave Addr: 0x78 | >>>>> ipmitool -I lanplus -H 192.168.0.120 -U admin -P Cmb9.Cmb9 raw 0x06 0x52 0x1f 0x78 0x30 0x00</p>
+<div class="debug-code"><span class="debug-code-label">Debug Code (Reg 0x1B)</span><span id="debugCodeValue" class="debug-code-value">--</span></div>
+
+<textarea id="rawInput" placeholder="Paste raw data here, e.g.:
+01 28 ff ff ff ff ff ff ff 7f 3f ff ff ff 67 3e
+55 b6 c0 c0 ff 3c 03 fb 0f 88 00 00 03 10 50 dd
+...">01 28 ff ff ff ff ff ff ff 7f 3f ff ff ff 67 3e
+55 b6 c0 c0 ff 3c 03 fb 0f 88 00 00 03 10 50 dd
+</textarea>
+
+<button onclick="decode()">Decode</button>
+
+<div class="filter-bar">
+  <input id="filterInput" type="text" placeholder="Filter by signal name..." oninput="applyFilter()">
+  <label><input type="checkbox" id="chkNonZero" onchange="applyFilter()"> Show only non-0x00 registers</label>
+  <label><input type="checkbox" id="chkFault" onchange="applyFilter()"> Show only bits = 0 (potential faults)</label>
+</div>
+
+<div id="output"></div>
+
+<script>
+const REGS = [
+{"addr":0,"hex":"00","rw":"RO","bits":["MB CPLD_REV_MAJOR","MB CPLD_REV_MAJOR","MB CPLD_REV_MAJOR","MB CPLD_REV_MAJOR","MB CPLD_REV_MINOR","MB CPLD_REV_MINOR","MB CPLD_REV_MINOR","MB CPLD_REV_MINOR"],"type":"FPGA Version"},
+{"addr":1,"hex":"01","rw":"RO","bits":["MB CPLD_REV_MAINT","MB CPLD_REV_MAINT","MB CPLD_REV_MAINT","MB CPLD_REV_MAINT","MB CPLD_REV_EXTRA","MB CPLD_REV_EXTRA","MB CPLD_REV_EXTRA","MB CPLD_REV_EXTRA"],"type":"FPGA Version"},
+{"addr":2,"hex":"02","rw":"RW","bits":["FM_HPM_STBY_RDY_LVC18","PWRGD_PVNN_MAIN_CPU0_LVC3","FM_PVNN_MAIN_CPU0_R_LVC3_EN","PWRGD_PVCCFA_EHV_CPU0_LVC3","FM_PVCCFA_EHV_CPU0_R_LVC3_EN","PWRGD_P1V1_AUX","FM_P1V1_AUX_LVC3_EN","PWRGD_P1V2_MAX10_AUX"],"type":"Power Sequence - 1"},
+{"addr":3,"hex":"03","rw":"RO","bits":["FM_CPU0_SLPS3_FPGA_R_LVC18_N","FM_CPU0_SLPS4_FPGA_R_LVC18_N","FM_CPU0_S5_PWR_RETAINED_FPGA_R","FM_CPU0_SLPS5_LVC18_N","FM_CPU0_PWRBTN_FPGA_R_LVC18_N","PWR_BTN_R_N","PWRGD_CPU0_AUX_PWRGD","FM_HPM_STBY_RST_LVC18_N"],"type":"Power Sequence - 2"},
+{"addr":4,"hex":"04","rw":"RO","bits":["P1V8_SW01_EN","PWRGD_P3V3_LVC3_PWRGD","FM_P3V3_LVC3_EN","RSVD","RSVD","PWRGD_P12V_VRM","FM_P12V_VRM_EN","P54V_MB_PG"],"type":"Power Sequence - 3"},
+{"addr":5,"hex":"05","rw":"RO","bits":["FM_PVCCFA_EHV_CPU1_R_EN","PWRGD_PVCC3V3_AUX_CPU1","FM_CPU1_PVCC3V3_AUX_EN_LVC3_R","PWRGD_P0V8_SW01","FM_P0V8_SW01_EN","PG_P1V25_SW01","P1V25_SW01_EN","P1V8_SW01_PGOOD"],"type":"Power Sequence - 4"},
+{"addr":6,"hex":"06","rw":"RO","bits":["PWRGD_PVCCD1_HV_CPU0_LVC3","PWRGD_PVCCD0_HV_CPU0_LVC3","FM_PVCCD_HV_CPU1_R_LVC3_EN","FM_PVCCD_HV_CPU0_R_LVC3_EN","PWRGD_CPU1_AUX_PWRGD_LVC18_R","PWRGD_PVNN_MAIN_CPU1_LVC3","FM_PVNN_MAIN_CPU1_R_EN","PWRGD_PVCCFA_EHV_CPU1_LVC3"],"type":"Power Sequence - 5"},
+{"addr":7,"hex":"07","rw":"RO","bits":["FM_PVCCINFAON_CPU1_R_EN","FM_PVCCINFAON_CPU0_R_EN","PWRGD_PVCCFA_EHV_FIVRA_CPU1","PWRGD_PVCCFA_EHV_FIVRA_CPU0","FM_PVCCFA_EHV_FIVRA_CPU1_R_EN","FM_PVCCFA_EHV_FIVRA_CPU0_R_EN","PWRGD_PVCCD0_HV_CPU1_LVC3","PWRGD_PVCCD1_HV_CPU1_LVC3"],"type":"Power Sequence - 6"},
+{"addr":8,"hex":"08","rw":"RO","bits":["PWRGD_CPU1_S0_PWROK_LVC1_R","PWRGD_CPU0_S0_PWROK_LVC1_R","PWRGD_PVCCIN_CPU1_LVC3","PWRGD_PVCCIN_CPU0_LVC3","FM_PVCCIN_CPU1_R_LVC3_EN","FM_PVCCIN_CPU0_R_LVC3_EN","PWRGD_PVCCINFAON_CPU1_LVC3","PWRGD_PVCCINFAON_CPU0_LVC3"],"type":"Power Sequence - 7"},
+{"addr":9,"hex":"09","rw":"RO","bits":["RSVD","RST_CPU0_PLTRST_SYNC_LVC18_N","H_CPU1_THERMTRIP_LVC1_R2_N","H_CPU0_THERMTRIP_LVC1_R2_N","PWRGD_CPU1_CPUPWRGD_FPGA_LVC1","PWRGD_CPU0_CPUPWRGD_FPGA_LVC1","FM_CPU1_REFCLK_RDY_OD","FM_CPU0_REFCLK_RDY_OD"],"type":"Power Sequence - 8"},
+{"addr":10,"hex":"0A","rw":"RO","bits":["RSVD","RSVD","PWRGD_FAIL_CPU0_GH_PLD_LVC3","PWRGD_FAIL_CPU0_EF_PLD_LVC3","PWRGD_FAIL_CPU0_CD_PLD_LVC3","PWRGD_FAIL_CPU0_AB_PLD_LVC3","RST_CPU1_LVC1_R_N","RST_CPU0_LVC1_R_N"],"type":"Power Sequence - 9"},
+{"addr":11,"hex":"0B","rw":"RO","bits":["PWRGD_DRAMPWRGD_CPU1_GH","PWRGD_DRAMPWRGD_CPU1_EF","PWRGD_DRAMPWRGD_CPU1_CD","PWRGD_DRAMPWRGD_CPU1_AB","PWRGD_DRAMPWRGD_CPU0_GH","PWRGD_DRAMPWRGD_CPU0_EF","PWRGD_DRAMPWRGD_CPU0_CD","PWRGD_DRAMPWRGD_CPU0_AB"],"type":"Power Sequence - 10"},
+{"addr":12,"hex":"0C","rw":"RO","bits":["M_GH_CPU1_RESET_LVC1_N","M_EF_CPU1_RESET_LVC1_N","M_CD_CPU1_RESET_LVC1_N","M_AB_CPU1_RESET_LVC1_N","M_GH_CPU0_RESET_LVC1_N","M_EF_CPU0_RESET_LVC1_N","M_CD_CPU0_RESET_LVC1_N","M_AB_CPU0_RESET_LVC1_N"],"type":"Power Sequence - 11"},
+{"addr":13,"hex":"0D","rw":"RO","bits":["M_GH_CPU1_FPGA_RESET_R_N","M_EF_CPU1_FPGA_RESET_R_N","M_CD_CPU1_FPGA_RESET_R_N","M_AB_CPU1_FPGA_RESET_R_N","M_GH_CPU0_FPGA_RESET_R_N","M_EF_CPU0_FPGA_RESET_R_N","M_CD_CPU0_FPGA_RESET_R_N","M_AB_CPU0_FPGA_RESET_R_N"],"type":"Power Sequence - 12"},
+{"addr":14,"hex":"0E","rw":"RO","bits":["RSVD","RSVD","RSVD","SCM_PRSNT_0","RSVD","RSVD","GPU_BASE_STBY_EN","FM_CPU1_PVCC3V3_AUX_EN"],"type":"Misc Status"},
+{"addr":15,"hex":"0F","rw":"RO","bits":["RSVD","OCP2_NIC_PWR_GOOD","OCP2_RES_PRSNT_N","OCP_CPU1_NVDIMM_EFGH_SHTDN","OCP_CPU1_NVDIMM_ABCD_SHTDN","OCP_CPU0_NVDIMM_EFGH_SHTDN","OCP_CPU0_NVDIMM_ABCD_SHTDN","OCP1_RIS_PRESNT_N"],"type":"OCP / NVDIMM"},
+{"addr":16,"hex":"10","rw":"RO","bits":["RSVD","SW1_SPI_EN","SW1_DONE_L","SW_CPU1_PERST_N","RSVD","SW0_SPI_EN","SW0_DONE_L","SW_CPU0_PERST_N"],"type":"Switch Status"},
+{"addr":17,"hex":"11","rw":"RO","bits":["USB216_RST_N","FORCE_PWRON","CPU0_ESPI_CS1_N","PCIE_CLKREQ_N","RSVD","SWB_CLK_BUF_PG_PD_1_N","SWB_CLK_BUF_PG_PD_0_N","SWB_PRSNT_N"],"type":"Misc Signals"},
+{"addr":18,"hex":"12","rw":"RO","bits":["PEHPCPU0_ALERT_N","CPU0_MON_FAIL_N","CPU0_PROC_ID1","CPU0_PROC_ID0","CPU0_PKGID_2","CPU0_PKGID_1","CPU0_PKGID_0","CPU0_PRESENT_N"],"type":"CPU0 ID / Status"},
+{"addr":19,"hex":"13","rw":"RO","bits":["PEHPCPU1_ALERT_N","CPU1_MON_FAIL_N","CPU1_PROC_ID1","CPU1_PROC_ID0","CPU1_PKGID_2","CPU1_PKGID_1","CPU1_PKGID_0","CPU1_PRESENT_N"],"type":"CPU1 ID / Status"},
+{"addr":20,"hex":"14","rw":"RO","bits":["OCP_PCIE_CPU0_PERST_N","RSVD","RSVD","RSVD","PCIE_CPU1_PERST_N","PCIE_CPU0_PERST_N","CPU1_RST_N","CPU0_RST_N"],"type":"PERST / Reset"},
+{"addr":21,"hex":"15","rw":"RW","bits":["RSVD","RSVD","IRQ_CPU0_WAKE_N","CPU0_S5_PWR_RETAINED_N","CPU1_TXT_PLTEN","CPU0_TXT_PLTEN","CPU1_BIST_ENABLE","CPU0_BIST_ENABLE"],"type":"CPU Control"},
+{"addr":22,"hex":"16","rw":"RW","bits":["AC_POWER_CYCLE_N","RSVD","RSVD","RSVD","RSVD","RSVD","PASSWORD_CLEAR_N","HDD_WAKE_RSV_N"],"type":"System Control"},
+{"addr":23,"hex":"17","rw":"NA","bits":["PWRGD_CPU0_AUX_PWRGD","GLBRST_N_br","FM_CPU0_GLB_RST_WARN","PWRGD_PVCC3V3_AUX_CPU1","P_MID_SYSTEM_READY","HC_BMCEnableOutput","CEC2_RST_MON_AP_RST_REQ_N_FPGA","wnG3SoftEn"],"type":"System Status"},
+{"addr":24,"hex":"18","rw":"NA","bits":["RSVD","RSVD","RSVD","StbyPwrStateMachineValue","StbyPwrStateMachineValue","StbyPwrStateMachineValue","StbyPwrStateMachineValue","StbyPwrStateMachineValue"],"type":"Standby Power State Machine"},
+{"addr":25,"hex":"19","rw":"NA","bits":["MainPwrStateMachineValue","MainPwrStateMachineValue","MainPwrStateMachineValue","MainPwrStateMachineValue","MainPwrStateMachineValue","RSVD","RSVD","RSVD"],"type":"Main Power State Machine"},
+{"addr":26,"hex":"1A","rw":"RO","bits":["GPU_NormalPwrStateMachine","GPU_NormalPwrStateMachine","GPU_NormalPwrStateMachine","GPU_NormalPwrStateMachine","GPU_StbyPwrStateMachine","GPU_StbyPwrStateMachine","GPU_StbyPwrStateMachine","GPU_StbyPwrStateMachine"],"type":"GPU Normal/Stby Power State"},
+{"addr":27,"hex":"1B","rw":"RO","bits":["CPLD Debug Code","CPLD Debug Code","CPLD Debug Code","CPLD Debug Code","CPLD Debug Code","CPLD Debug Code","CPLD Debug Code","CPLD Debug Code"],"type":"CPLD Debug Code (7-Seg LED)"},
+{"addr":28,"hex":"1C","rw":"RO","bits":["IDCODE(03)","IDCODE(03)","IDCODE(03)","IDCODE(03)","IDCODE(03)","IDCODE(03)","IDCODE(03)","IDCODE(03)"],"type":"JTAG IDCODE for MB CPLD"},
+{"addr":29,"hex":"1D","rw":"RO","bits":["IDCODE(10)","IDCODE(10)","IDCODE(10)","IDCODE(10)","IDCODE(10)","IDCODE(10)","IDCODE(10)","IDCODE(10)"],"type":"JTAG IDCODE for MB CPLD"},
+{"addr":30,"hex":"1E","rw":"RO","bits":["IDCODE(50)","IDCODE(50)","IDCODE(50)","IDCODE(50)","IDCODE(50)","IDCODE(50)","IDCODE(50)","IDCODE(50)"],"type":"JTAG IDCODE for MB CPLD"},
+{"addr":31,"hex":"1F","rw":"RO","bits":["IDCODE(DD)","IDCODE(DD)","IDCODE(DD)","IDCODE(DD)","IDCODE(DD)","IDCODE(DD)","IDCODE(DD)","IDCODE(DD)"],"type":"JTAG IDCODE for MB CPLD"},
+{"addr":32,"hex":"20","rw":"RO","bits":["RSVD","RSVD","IRQ_SMB_BMC_PWR_ALERT_N","GB1_I2C2_ALERT_N","GB1_I2C1_ALERT_N","PU_SYS_ALERT_N","VR_P12V2_SENSOR_N","FM_P12V_VRM_ALERT_N"],"type":"Alert Signals"},
+{"addr":33,"hex":"21","rw":"RO","bits":["RSVD","FM_BOARD_REV_ID2","FM_BOARD_REV_ID1","FM_BOARD_REV_ID0","FM_BOARD_ID1","FM_BOARD_ID0","MB_ID1","MB_ID0"],"type":"Board ID"},
+{"addr":34,"hex":"22","rw":"RO","bits":["RSVD","GPU_BASE_FPGA_OVERT_R_N","GPU_BASE_HMC_READY_R","GPU_BASE_HMC_PRSNT_R_N","RSVD","RSVD","GPU_BASE_ID1","GPU_BASE_ID0"],"type":"GPU Base HMC / ID"},
+{"addr":35,"hex":"23","rw":"RO","bits":["RSVD","GPU_THERM_OVERT_N","GPU_PWR_BRAKE_N","GPU_BASE1_PWR_OK","GPU_BASE_PWR_EN","GPU_BASE1_CPLD_READY","GPU_BASE_STBY_EN","GPU_BASE1_PRSNT_N"],"type":"GPU Baseboard Status"}
+];
+
+let decodedData = [];
+
+function decode() {
+  const raw = document.getElementById('rawInput').value.trim();
+  const bytes = raw.replace(/[^0-9a-fA-F\s]/g, ' ').split(/\s+/).filter(x => x.length > 0 && x.length <= 2).map(x => parseInt(x, 16));
+  decodedData = bytes;
+  document.getElementById('debugCodeValue').textContent = bytes.length > 27 ? `0x${bytes[27].toString(16).toUpperCase().padStart(2, '0')}` : '--';
+  applyFilter();
+}
+
+function applyFilter() {
+  const filter = document.getElementById('filterInput').value.toLowerCase();
+  const nonZeroOnly = document.getElementById('chkNonZero').checked;
+  const faultOnly = document.getElementById('chkFault').checked;
+  const bytes = decodedData;
+
+  if (bytes.length === 0) { document.getElementById('output').innerHTML = '<p style="color:#e74c3c">No data parsed.</p>'; return; }
+
+  let html = `<div class="summary">Parsed <b>${bytes.length}</b> bytes (registers 0x00 - 0x${(bytes.length-1).toString(16).toUpperCase().padStart(2,'0')})</div>`;
+
+  for (let i = 0; i < bytes.length && i < 256; i++) {
+    const val = bytes[i];
+    const reg = REGS.find(r => r.addr === i);
+    const bitNames = reg ? reg.bits : ['b7','b6','b5','b4','b3','b2','b1','b0'];
+    const regType = reg ? (reg.type || '') : '';
+    const rw = reg ? reg.rw : '??';
+
+    if (nonZeroOnly && val === 0) continue;
+    const allBitNames = bitNames.join(' ').toLowerCase();
+    if (filter && !allBitNames.includes(filter) && !regType.toLowerCase().includes(filter) && !`0x${i.toString(16)}`.includes(filter)) continue;
+
+    let hasFault = false;
+    for (let b = 7; b >= 0; b--) {
+      if (((val >> b) & 1) === 0 && bitNames[7-b] && !bitNames[7-b].startsWith('RSVD')) hasFault = true;
+    }
+    if (faultOnly && !hasFault) continue;
+
+    if (i > 36) continue;
+
+    html += `<div class="reg-header">Reg 0x${i.toString(16).toUpperCase().padStart(2,'0')} (${i}) = 0x${val.toString(16).toUpperCase().padStart(2,'0')} (${val.toString(2).padStart(8,'0')}) [${rw}] ${regType}</div>`;
+    html += `<table class="reg-table"><tr><th>Bit</th>`;
+    for (let b = 7; b >= 0; b--) html += `<th>${b}</th>`;
+    html += `</tr><tr><td><b>Signal</b></td>`;
+    for (let b = 7; b >= 0; b--) {
+      const name = bitNames[7-b] || 'RSVD';
+      html += `<td title="${name}" style="font-size:10px;max-width:90px;word-break:break-all">${name}</td>`;
+    }
+    html += `</tr><tr><td><b>Value</b></td>`;
+    for (let b = 7; b >= 0; b--) {
+      const v = (val >> b) & 1;
+      const name = bitNames[7-b] || 'RSVD';
+      const cls = name.startsWith('RSVD') ? 'bit-na' : (v ? 'bit-1' : 'bit-0');
+      html += `<td class="${cls}">${v}</td>`;
+    }
+    html += `</tr></table>`;
+  }
+
+  document.getElementById('output').innerHTML = html;
+}
+
+window.onload = decode;
+</script>
+</body>
+</html>
