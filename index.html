@@ -1,13 +1,7 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>PCIe topo檢查器</title>
+<title>PCIe 拓撲檢查器</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<!-- 使用相對路徑直接連結到解碼器工具 -->
-<p>
-  <a href="./MB_cpld_decoder_J3.html" style="font-size: 16px; color: #0066cc;">
-    🔗 前往 MB CPLD Decoder 工具
-  </a>
-</p>
 <style>
 /* 版面：頂部三個輸入卡 → 判定列與計數卡 → 分頁（槽位圖為主視圖）；以「硬體槽位晶片」呈現，其餘保持安靜 */
 :root{
@@ -241,10 +235,10 @@ h2.sec{margin:6px 0 0;font:600 16px/1.2 var(--f-cond);letter-spacing:.02em}
       <details><summary>改用貼上文字</summary><textarea id="ta-tree" spellcheck="false" placeholder="貼上 lspci -tv 輸出"></textarea><button class="btn sm" type="button" data-apply="tree">套用</button></details>
     </div>
     <div class="drop" data-slot="cfg">
-      <h3>③ 設定檔 JSON（選填）</h3>
-      <code>pcie-topology-config/1</code>
+      <h3>③ 設定檔 TOML（選填）</h3>
+      <code>pcie-topology-config/1 · .toml</code>
       <div class="st" id="st-cfg"></div>
-      <div class="row"><label class="btn sm"><input type="file" id="f-cfg" hidden multiple>選擇檔案</label><button class="btn sm" type="button" id="btnToJson">管理設定檔</button></div>
+      <div class="row"><label class="btn sm"><input type="file" id="f-cfg" hidden multiple>選擇檔案</label><button class="btn sm" type="button" id="btnToCfg">編輯 / 產生設定檔</button></div>
     </div>
   </section>
   <div class="dim" style="font-size:12.5px;margin-top:-6px">三個檔案可直接拖進頁面，會依內容自動分辨。加 <span class="mono">-nn</span> 才有 vendor:device ID 可與設定檔比對型號；沒有 root 權限時 lspci 讀不到 LnkCap / LnkSta。</div>
@@ -258,7 +252,7 @@ h2.sec{margin:6px 0 0;font:600 16px/1.2 var(--f-cond);letter-spacing:.02em}
     <button role="tab" data-tab="links">Link 狀態</button>
     <button role="tab" data-tab="tree">拓撲樹</button>
     <button role="tab" data-tab="bdf">BDF 查詢</button>
-    <button role="tab" data-tab="json">JSON 設定檔</button>
+    <button role="tab" data-tab="config">TOML 設定檔</button>
   </nav>
 
   <div id="panels">
@@ -268,7 +262,7 @@ h2.sec{margin:6px 0 0;font:600 16px/1.2 var(--f-cond);letter-spacing:.02em}
     <section class="panelx" data-panel="links" hidden></section>
     <section class="panelx" data-panel="tree" hidden></section>
     <section class="panelx" data-panel="bdf" hidden></section>
-    <section class="panelx" data-panel="json" hidden></section>
+    <section class="panelx" data-panel="config" hidden></section>
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
@@ -789,7 +783,7 @@ const PCIE = (function () {
     return cpus;
   }
 
-  /* ---------- 基準 JSON / 驗證 ---------- */
+  /* ---------- 基準設定檔 / 驗證 ---------- */
   function buildBaseline(model, an, meta) {
     meta = meta || {};
     const roles = ['gpu', 'nic', 'nvme', 'storage', 'nvswitch', 'pcie_switch'];
@@ -833,7 +827,7 @@ const PCIE = (function () {
 
   function validateConfig(cfg) {
     const errors = [], warnings = [];
-    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { errors: ['設定檔必須是 JSON 物件'], warnings };
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { errors: ['設定檔內容必須是 TOML table（鍵值對）'], warnings };
     if (!cfg.schema) warnings.push('缺少 "schema"，建議填 "pcie-topology-config/1"');
     else if (!/^pcie-topology-config\//.test(cfg.schema)) errors.push('"schema" 不是 pcie-topology-config/*');
     if (cfg.expected_counts) Object.keys(cfg.expected_counts).forEach((k) => {
@@ -993,7 +987,176 @@ const PCIE = (function () {
     return { vvv, tree: tv.join('\n') + '\n', devices: D };
   }
 
-  return { normBdf, parseVVV, parseTree, buildModel, assignCpus, analyze, buildSlotMap, buildBaseline, validateConfig, buildSample, evalLink, genOf, genText, bwOf, ROLE_LABEL, COUNT_ROLES, ENDPOINT_ROLES, CFG_ROLES, shortName, hex2, GEN_GTS };
+  /* ---------- TOML (支援本工具需要的子集：註解、[table]、[[array of tables]]、點狀 key、字串/整數/浮點/布林/陣列(可跨行)/inline table) ---------- */
+  function parseToml(text) {
+    text = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    const n = text.length; let pos = 0;
+    const lineOf = (p) => { let l = 1; for (let i = 0; i < p && i < n; i++) if (text[i] === '\n') l++; return l; };
+    const fail = (msg, p) => { const e = new Error('第 ' + lineOf(p == null ? pos : p) + ' 行：' + msg); e.tomlLine = lineOf(p == null ? pos : p); throw e; };
+    const skipInline = () => { while (pos < n && (text[pos] === ' ' || text[pos] === '\t')) pos++; };
+    const skipComment = () => { if (text[pos] === '#') while (pos < n && text[pos] !== '\n') pos++; };
+    const skipAll = () => { for (;;) { skipInline(); skipComment(); if (pos < n && text[pos] === '\n') pos++; else break; } };
+    const endOfLine = () => { skipInline(); skipComment(); if (pos < n && text[pos] !== '\n') fail('這一行在值後面還有多餘的內容：' + text.slice(pos, pos + 16).split('\n')[0]); };
+    const isBare = (c) => /[A-Za-z0-9_-]/.test(c || '');
+    function parseString() {
+      const q = text[pos]; const start = pos; pos++;
+      if (q === "'") { const e = text.indexOf("'", pos); const nl = text.indexOf('\n', pos); if (e < 0 || (nl >= 0 && nl < e)) fail('字串沒有結尾的單引號', start); const s = text.slice(pos, e); pos = e + 1; return s; }
+      if (text.startsWith('""', pos)) fail('不支援三引號多行字串，請改用單行字串', start);
+      let out = '';
+      while (pos < n) {
+        const c = text[pos];
+        if (c === '"') { pos++; return out; }
+        if (c === '\n') fail('字串沒有結尾的雙引號', start);
+        if (c === '\\') {
+          const d = text[pos + 1]; pos += 2;
+          const map = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '"': '"', '\\': '\\' };
+          if (d in map) out += map[d];
+          else if (d === 'u' || d === 'U') { const len = d === 'u' ? 4 : 8; const h = text.slice(pos, pos + len); if (!/^[0-9a-fA-F]+$/.test(h) || h.length !== len) fail('錯誤的 \\' + d + ' 跳脫', start); out += String.fromCodePoint(parseInt(h, 16)); pos += len; }
+          else fail('不認得的跳脫字元 \\' + (d || ''), pos - 2);
+        } else { out += c; pos++; }
+      }
+      fail('字串沒有結尾的雙引號', start);
+    }
+    function parseKey() {
+      const keys = [];
+      for (;;) {
+        skipInline();
+        const c = text[pos];
+        if (c === '"' || c === "'") keys.push(parseString());
+        else { const s = pos; while (pos < n && isBare(text[pos])) pos++; if (s === pos) fail('這裡需要 key 名稱'); keys.push(text.slice(s, pos)); }
+        skipInline();
+        if (text[pos] === '.') { pos++; continue; }
+        return keys;
+      }
+    }
+    function parseValue() {
+      skipInline();
+      const c = text[pos];
+      if (c === '"' || c === "'") return parseString();
+      if (c === '[') {
+        pos++; const arr = [];
+        for (;;) {
+          skipAll();
+          if (text[pos] === ']') { pos++; return arr; }
+          if (pos >= n) fail('陣列少了結尾的 ]');
+          arr.push(parseValue()); skipAll();
+          if (text[pos] === ',') { pos++; continue; }
+          if (text[pos] === ']') { pos++; return arr; }
+          fail('陣列元素之間需要逗號');
+        }
+      }
+      if (c === '{') {
+        pos++; const obj = {};
+        skipInline();
+        if (text[pos] === '}') { pos++; return obj; }
+        for (;;) {
+          const keys = parseKey(); skipInline();
+          if (text[pos] !== '=') fail('key 後面需要 =');
+          pos++; setPath(obj, keys, parseValue()); skipInline();
+          if (text[pos] === ',') { pos++; skipInline(); continue; }
+          if (text[pos] === '}') { pos++; return obj; }
+          fail('inline table 需要用逗號分隔並以 } 結尾');
+        }
+      }
+      const s = pos; while (pos < n && !/[\s,\]}#]/.test(text[pos])) pos++;
+      const tok = text.slice(s, pos);
+      if (!tok) fail('這裡需要一個值');
+      if (tok === 'true') return true; if (tok === 'false') return false;
+      if (/^[+-]?(0|[1-9][0-9_]*)$/.test(tok)) return parseInt(tok.replace(/_/g, ''), 10);
+      if (/^0x[0-9a-fA-F_]+$/.test(tok)) return parseInt(tok.slice(2).replace(/_/g, ''), 16);
+      if (/^[+-]?(0|[1-9][0-9_]*)(\.[0-9_]+)?([eE][+-]?[0-9]+)?$/.test(tok)) return parseFloat(tok.replace(/_/g, ''));
+      if (/^\d{4}-\d{2}-\d{2}([Tt ][\d:.]+([Zz]|[+-]\d{2}:\d{2})?)?$/.test(tok)) return tok;
+      fail('無法解讀的值「' + tok + '」（字串請加上雙引號，例如 "0000:18:00.0"）', s);
+    }
+    function setPath(obj, keys, val) {
+      let o = obj;
+      for (let i = 0; i < keys.length - 1; i++) { const k = keys[i]; if (o[k] === undefined) o[k] = {}; else if (typeof o[k] !== 'object' || Array.isArray(o[k])) fail('「' + k + '」不是 table'); o = o[k]; }
+      const last = keys[keys.length - 1];
+      if (Object.prototype.hasOwnProperty.call(o, last)) fail('key「' + keys.join('.') + '」重複定義了');
+      o[last] = val;
+    }
+    const root = {}; let cur = root; const seenTables = new Set();
+    const walk = (keys, p) => { let o = root; keys.forEach((k, i) => { if (o[k] === undefined) o[k] = {}; if (Array.isArray(o[k])) { if (!o[k].length) fail('「' + k + '」是空陣列', p); o = o[k][o[k].length - 1]; } else if (typeof o[k] === 'object') o = o[k]; else fail('「' + k + '」已經是一般值，不能當 table 用', p); }); return o; };
+    for (;;) {
+      skipAll();
+      if (pos >= n) break;
+      const lineStart = pos;
+      if (text[pos] === '[') {
+        const isArr = text[pos + 1] === '['; pos += isArr ? 2 : 1;
+        const keys = parseKey(); skipInline();
+        if (isArr) { if (text.slice(pos, pos + 2) !== ']]') fail('[[...]] 需要以 ]] 結尾', lineStart); pos += 2; }
+        else { if (text[pos] !== ']') fail('[...] 需要以 ] 結尾', lineStart); pos++; }
+        endOfLine();
+        const parent = keys.length > 1 ? walk(keys.slice(0, -1), lineStart) : root; const last = keys[keys.length - 1];
+        if (isArr) {
+          if (parent[last] === undefined) parent[last] = [];
+          if (!Array.isArray(parent[last])) fail('「' + last + '」不是 [[array of tables]]', lineStart);
+          const o = {}; parent[last].push(o); cur = o;
+        } else {
+          if (parent[last] === undefined) parent[last] = {};
+          else if (Array.isArray(parent[last]) || typeof parent[last] !== 'object') fail('[' + keys.join('.') + '] 與既有的值衝突', lineStart);
+          else if (seenTables.has(keys.join('.'))) fail('[' + keys.join('.') + '] 重複定義了', lineStart);
+          seenTables.add(keys.join('.')); cur = parent[last];
+        }
+      } else {
+        const keys = parseKey(); skipInline();
+        if (text[pos] !== '=') fail('key「' + keys.join('.') + '」後面需要 =，或這行要寫成 [表格名稱]', lineStart);
+        pos++; const v = parseValue(); endOfLine(); setPath(cur, keys, v);
+      }
+    }
+    return root;
+  }
+
+  const tq = (s) => JSON.stringify(String(s));
+  function tv(v) {
+    if (typeof v === 'string') return tq(v);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) return '[' + v.map(tv).join(', ') + ']';
+    if (v && typeof v === 'object') return '{ ' + Object.keys(v).filter((k) => v[k] != null).map((k) => (/^[A-Za-z0-9_-]+$/.test(k) ? k : tq(k)) + ' = ' + tv(v[k])).join(', ') + ' }';
+    return '""';
+  }
+  const tk = (k) => (/^[A-Za-z0-9_-]+$/.test(k) ? k : tq(k));
+  function toToml(cfg) {
+    const o = [];
+    const kv = (obj, keys) => keys.forEach((k) => { if (obj[k] != null) o.push(tk(k) + ' = ' + tv(obj[k])); });
+    o.push('# PCIe 拓撲設定檔。以 # 開頭的是註解，可自由修改、刪除或新增。');
+    o.push('# BDF 請寫成 "網域:匯流排:裝置.功能"，例如 "0000:18:00.0"，並加上雙引號。');
+    o.push('');
+    o.push('schema = ' + tq(cfg.schema || 'pcie-topology-config/1'));
+    if (cfg.meta && Object.keys(cfg.meta).length) {
+      o.push('', '[meta]', '# 只做說明，不參與比對');
+      kv(cfg.meta, Object.keys(cfg.meta));
+    }
+    if (cfg.expected_counts) {
+      o.push('', '# ---- 各類裝置的預期總數（pcie_switch 以 Switch 上游埠計）----', '[expected_counts]');
+      const ks = COUNT_ROLES.filter((k) => cfg.expected_counts[k] != null).concat(Object.keys(cfg.expected_counts).filter((k) => COUNT_ROLES.indexOf(k) < 0));
+      kv(cfg.expected_counts, ks);
+    }
+    if (cfg.link_rules && Object.keys(cfg.link_rules).length) {
+      o.push('', '# ---- 各類型預期的最低協商 Link（gen = PCIe 世代, width = 通道數）----');
+      Object.keys(cfg.link_rules).forEach((r, i) => { o.push('[link_rules.' + tk(r) + ']'); kv(cfg.link_rules[r], Object.keys(cfg.link_rules[r])); });
+    }
+    (cfg.cpus || []).forEach((c, i) => {
+      if (i === 0) o.push('', '# ---- CPU 與 Root Bus / NUMA 的對照（決定裝置屬於哪顆 CPU）----');
+      o.push('', '[[cpus]]'); kv(c, ['id', 'numa_nodes', 'root_buses']);
+      if (c.expected_counts) { o.push('[cpus.expected_counts]'); kv(c.expected_counts, Object.keys(c.expected_counts)); }
+    });
+    let lastRole = null;
+    (cfg.devices || []).forEach((d, i) => {
+      if (d.role !== lastRole) { o.push('', '# ---- ' + (ROLE_LABEL[d.role] || d.role) + ' ----'); lastRole = d.role; }
+      o.push('', '[[devices]]');
+      kv(d, ['name', 'role', 'bdf', 'cpu', 'parent_bdf', 'vendor_id', 'device_id', 'slot', 'link', 'required']);
+    });
+    return o.join('\n') + '\n';
+  }
+  /* 設定檔文字 → 物件；{ 開頭視為 JSON（相容舊檔），其餘視為 TOML */
+  function parseConfigText(text) {
+    const s = String(text).replace(/^﻿/, '');
+    if (s.trim()[0] === '{') { try { return { obj: JSON.parse(s), format: 'json' }; } catch (e) { return { error: 'JSON 格式錯誤：' + e.message }; } }
+    try { return { obj: parseToml(s), format: 'toml' }; } catch (e) { return { error: 'TOML 格式錯誤，' + e.message }; }
+  }
+
+  return { parseToml, toToml, parseConfigText, normBdf, parseVVV, parseTree, buildModel, assignCpus, analyze, buildSlotMap, buildBaseline, validateConfig, buildSample, evalLink, genOf, genText, bwOf, ROLE_LABEL, COUNT_ROLES, ENDPOINT_ROLES, CFG_ROLES, shortName, hex2, GEN_GTS };
 })();
 if (typeof module !== 'undefined') module.exports = PCIE;
 
@@ -1022,7 +1185,8 @@ function toast(m){ toastEl.textContent = m; toastEl.hidden = false; clearTimeout
 /* ---------- 載入 ---------- */
 function sniff(t){
   const s = t.trim();
-  if (s[0] === '{') { try { JSON.parse(s); return 'cfg'; } catch (e) { return 'cfg'; } }
+  if (s[0] === '{') return 'cfg'; // 舊版 JSON 設定檔
+  if (/^\s*schema\s*=\s*["']pcie-topology-config/m.test(t) || /^\s*\[\[?(meta|expected_counts|link_rules|cpus|devices)[\].]/m.test(t)) return 'cfg';
   if (/^\s*-\+?-?\[[0-9a-f]{4}:[0-9a-f]{2}\]/m.test(t) || /^\s*-\[[0-9a-f]{2}\]-/m.test(t)) return 'tree';
   if (/^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]\s/m.test(t)) return 'vvv';
   return null;
@@ -1031,10 +1195,13 @@ function resetAll(){ S.vvv = ''; S.tree = ''; S.cfg = null; S.cfgText = ''; S.na
 function setSlot(kind, text, name, quiet){
   if (S.sample) resetAll();
   if (kind === 'cfg') {
-    let obj; try { obj = JSON.parse(text); } catch (e) { toast('JSON 格式錯誤：' + e.message); S.cfgMsg = { errors:['JSON 格式錯誤：' + e.message], warnings:[] }; render(); return; }
-    const v = P.validateConfig(obj); S.cfgMsg = v;
+    const r = P.parseConfigText(text);
+    if (r.error) { toast(r.error); S.cfgMsg = { errors:[r.error], warnings:[] }; S.cfgText = text; render(); return; }
+    const v = P.validateConfig(r.obj); S.cfgMsg = v;
+    S.cfgText = r.format === 'json' ? P.toToml(r.obj) : text; // 舊 JSON 轉成 TOML 顯示；TOML 保留原文（含註解）
     if (v.errors.length) { toast('設定檔有 ' + v.errors.length + ' 個錯誤，未套用'); render(); return; }
-    S.cfg = obj; S.cfgText = JSON.stringify(obj, null, 2);
+    S.cfg = r.obj;
+    if (r.format === 'json' && !quiet) toast('這是 JSON 檔，已轉成 TOML 顯示，可在「TOML 設定檔」分頁儲存');
   } else S[kind] = text;
   S.names[kind] = name || '貼上文字';
   recompute(); if (!quiet) toast('已載入 ' + ({ vvv:'lspci -vvv', tree:'lspci -tv', cfg:'設定檔' }[kind]));
@@ -1042,8 +1209,8 @@ function setSlot(kind, text, name, quiet){
 async function readFiles(files, hint){
   for (const f of files) {
     const t = await f.text(); let k = sniff(t);
-    if (!k) { toast(f.name + '：無法辨識內容（不是 lspci -vvv / -tv / JSON）'); continue; }
-    if (hint && k !== hint) toast(f.name + ' 看起來是 ' + ({ vvv:'-vvv', tree:'-tv', cfg:'JSON 設定檔' }[k]) + '，已放到對應欄位');
+    if (!k) { toast(f.name + '：無法辨識內容（不是 lspci -vvv / -tv / TOML 設定檔）'); continue; }
+    if (hint && k !== hint) toast(f.name + ' 看起來是 ' + ({ vvv:'-vvv', tree:'-tv', cfg:'設定檔' }[k]) + '，已放到對應欄位');
     setSlot(k, t, f.name, true);
   }
 }
@@ -1058,14 +1225,14 @@ window.addEventListener('drop', (e) => { e.preventDefault(); $$('.drop').forEach
 $$('[data-apply]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.apply, t = $('#ta-' + k).value; if (!t.trim()) return; setSlot(k, t, '貼上文字'); }));
 $('#btnClear').addEventListener('click', () => { resetAll(); S.cfgMsg = null; recompute(); });
 $('#btnSample').addEventListener('click', loadSample);
-$('#btnToJson').addEventListener('click', () => setTab('json'));
+$('#btnToCfg').addEventListener('click', () => setTab('config'));
 
 function loadSample(){
   const ok = P.buildSample(false), bad = P.buildSample(true);
   const m0 = P.buildModel(ok.vvv, ok.tree), a0 = P.analyze(m0, null);
   const cfg = P.buildBaseline(m0, a0, { platform:'範例 2P GPU 伺服器', description:'範例：8 GPU / 4 Switch / 4 NIC / 8 NVMe 的正常配置' });
   resetAll();
-  S.vvv = bad.vvv; S.tree = bad.tree; S.cfg = cfg; S.cfgText = JSON.stringify(cfg, null, 2); S.cfgMsg = null;
+  S.vvv = bad.vvv; S.tree = bad.tree; S.cfg = cfg; S.cfgText = P.toToml(cfg); S.cfgMsg = null;
   S.names = { vvv:'範例 lspci -vvv（模擬，含故障）', tree:'範例 lspci -tv（模擬）', cfg:'範例設定檔（正常配置）' }; S.sample = true;
   recompute();
 }
@@ -1100,7 +1267,7 @@ function render(){
   $('[data-panel=paths]').innerHTML = renderPathsShell();
   $('[data-panel=links]').innerHTML = renderLinksShell();
   $('[data-panel=tree]').innerHTML = renderTree();
-  $('[data-panel=json]').innerHTML = renderJson();
+  $('[data-panel=config]').innerHTML = renderConfig();
   $('[data-panel=bdf]').innerHTML = renderBdf();
   bindPanels(); setTab(S.tab, true);
 }
@@ -1146,7 +1313,7 @@ function renderVerdict(){
   if (!an.hasConfig) extra = '<div class="note">' + ic('info') + '<span>沒有設定檔時只能檢查降速/降寬與空槽。載入設定檔才能比對數量、缺少裝置與 BDF 變動。</span><button class="btn sm" type="button" id="btnGenNote">以目前資料產生基準設定檔</button></div>';
   if (model.denied) extra += '<div class="note warn">' + ic('warn') + '<span>' + model.denied + ' 個裝置顯示 access denied，Link 資訊不完整。請用 <span class="mono">sudo</span> 重新擷取 lspci -vvv。</span></div>';
   el.innerHTML = '<div class="vhead"><div class="vtitle ' + cls + '">' + ic(cls === 'ok' ? 'ok' : cls === 'warn' ? 'warn' : 'bad') + esc(title) + '</div>' + (S.sample ? '<span class="tag">範例資料（模擬）</span>' : '') + '<span class="tag">' + model.list.length + ' 個 PCI 裝置</span><span class="tag">' + model.roots.length + ' 個 Root Bus</span></div><div class="counts">' + cards + '</div>' + extra;
-  const g = $('#btnGenNote'); if (g) g.addEventListener('click', () => { setTab('json'); genBaseline(); });
+  const g = $('#btnGenNote'); if (g) g.addEventListener('click', () => { setTab('config'); genBaseline(); });
 }
 
 /* 槽位圖 */
@@ -1285,39 +1452,40 @@ function renderTree(){
   return '<div class="ctrls"><button class="btn sm" type="button" id="expAll">全部展開</button><button class="btn sm" type="button" id="colAll">全部收合</button><span class="dim">階層來源：' + (model.hasTree ? 'lspci -tv' : '由 -vvv 的 Bus primary/secondary/subordinate 推算') + '</span></div>' + body;
 }
 
-/* JSON */
+/* TOML 設定檔 */
 const SCHEMA_ROWS = [
   ['schema', 'string', '必填', '固定為 "pcie-topology-config/1"，用來辨識格式版本。'],
-  ['meta', 'object', '選填', 'platform（機種名稱）、description、generated_at、source，只做說明，不參與比對。'],
-  ['expected_counts', 'object', '建議', '各類裝置的預期總數：cpu、gpu、pcie_switch、nic、nvme、storage、nvswitch（整數）。pcie_switch 以 Switch 上游埠計。'],
-  ['link_rules', 'object', '建議', '依類型設定預期的最低協商 Link，例如 "gpu": {"gen": 5, "width": 16}。單一裝置沒有自己的 link 時使用。'],
-  ['cpus[]', 'array', '建議', '每顆 CPU 一筆：id（如 "CPU0"）、numa_nodes（整數陣列）、root_buses（如 ["0000:15","3a"]）、可選 expected_counts。這是 CPU 與 BDF 的對照依據。'],
-  ['devices[]', 'array', '建議', '預期出現的裝置清單，每個裝置一筆（下列欄位）。'],
-  ['devices[].name', 'string', '建議', '人看的名稱，如 "GPU3"，會顯示在槽位圖。'],
-  ['devices[].role', 'string', '必填', 'gpu / nic / nvme / storage / nvswitch / pcie_switch / bmc_vga / other。'],
-  ['devices[].bdf', 'string', '必填', '預期的 BDF，如 "0000:3e:00.0"（可省略 domain）。pcie_switch 填上游埠的 BDF。'],
-  ['devices[].cpu', 'string', '選填', '預期掛在哪顆 CPU（對應 cpus[].id），不同會回報。'],
-  ['devices[].parent_bdf', 'string', '選填', '預期的上游 Port（Root Port 或 Switch 下游埠），可用來指出缺少的裝置原本在哪個槽。'],
-  ['devices[].vendor_id / device_id', 'string', '選填', '16 進位，如 "10de" / "2331"；需要 lspci -nn。BDF 變動時也用它找回裝置。'],
-  ['devices[].slot', 'string', '選填', '實體槽位標示，僅供顯示。'],
-  ['devices[].link', 'object', '建議', '預期協商結果 {"gen": 5, "width": 16}；低於這個值就回報。'],
-  ['devices[].required', 'boolean', '選填', '預設 true。']
+  ['meta', 'table', '選填', 'platform（機種名稱）、description、generated_at、source，只做說明，不參與比對。'],
+  ['expected_counts', 'table', '建議', '各類裝置的預期總數：cpu、gpu、pcie_switch、nic、nvme、storage、nvswitch（整數）。pcie_switch 以 Switch 上游埠計。'],
+  ['link_rules', 'table', '建議', '依類型設定預期的最低協商 Link，寫成 [link_rules.gpu] 加上 gen = 5、width = 16。單一裝置沒有自己的 link 時使用。'],
+  ['[[cpus]]', 'table 陣列', '建議', '每顆 CPU 一段：id（如 "CPU0"）、numa_nodes（整數陣列）、root_buses（如 ["0000:15", "3a"]）、可選的 [cpus.expected_counts]。這是 CPU 與 BDF 的對照依據。'],
+  ['[[devices]]', 'table 陣列', '建議', '預期出現的裝置清單，每個裝置寫一段 [[devices]]（下列欄位）。'],
+  ['devices.name', 'string', '建議', '人看的名稱，如 "GPU3"，會顯示在槽位圖。'],
+  ['devices.role', 'string', '必填', 'gpu / nic / nvme / storage / nvswitch / pcie_switch / bmc_vga / other。'],
+  ['devices.bdf', 'string', '必填', '預期的 BDF，如 "0000:3e:00.0"（可省略 domain）。pcie_switch 填上游埠的 BDF。'],
+  ['devices.cpu', 'string', '選填', '預期掛在哪顆 CPU（對應 cpus[].id），不同會回報。'],
+  ['devices.parent_bdf', 'string', '選填', '預期的上游 Port（Root Port 或 Switch 下游埠），可用來指出缺少的裝置原本在哪個槽。'],
+  ['devices.vendor_id / device_id', 'string', '選填', '16 進位，如 "10de" / "2331"；需要 lspci -nn。BDF 變動時也用它找回裝置。'],
+  ['devices.slot', 'string', '選填', '實體槽位標示，僅供顯示。'],
+  ['devices.link', 'inline table', '建議', '預期協商結果，寫成 link = { gen = 5, width = 16 }；低於這個值就回報。'],
+  ['devices.required', 'boolean', '選填', '預設 true。']
 ];
-function renderJson(){
+function renderConfig(){
   const msgs = S.cfgMsg ? '<div class="msgs">' + S.cfgMsg.errors.map((e) => '<div class="e">' + ic('bad') + ' ' + esc(e) + '</div>').join('') + S.cfgMsg.warnings.map((e) => '<div class="w">' + ic('warn') + ' ' + esc(e) + '</div>').join('') + (!S.cfgMsg.errors.length && !S.cfgMsg.warnings.length ? '<div class="o">' + ic('ok') + ' 格式檢查通過</div>' : '') + '</div>' : '';
   const warnBase = hasData() && an.sevCount.bad + an.sevCount.warn > 0 ? '<div class="note warn">' + ic('warn') + '<span>目前資料有 ' + (an.sevCount.bad + an.sevCount.warn) + ' 個問題。請確認這份資料來自「已知正常」的機器，再把它當基準，否則故障會被寫進設定檔。</span></div>' : '';
-  const sample = JSON.stringify({ schema:'pcie-topology-config/1', meta:{ platform:'MyServer-2U', description:'2 CPU / 8 GPU' }, expected_counts:{ cpu:2, gpu:8, pcie_switch:4, nic:4, nvme:8 }, link_rules:{ gpu:{ gen:5, width:16 }, nvme:{ gen:4, width:4 } }, cpus:[{ id:'CPU0', numa_nodes:[0], root_buses:['0000:15','0000:3a'] }, { id:'CPU1', numa_nodes:[1], root_buses:['0000:97','0000:ae'] }], devices:[{ name:'GPU0', role:'gpu', bdf:'0000:18:00.0', cpu:'CPU0', parent_bdf:'0000:17:00.0', vendor_id:'10de', device_id:'2331', link:{ gen:5, width:16 }, required:true }] }, null, 2);
-  return '<h2 class="sec">編輯 / 產生設定檔</h2><div class="cfgbox"><div class="ctrls"><label>機種名稱 <input type="text" id="platformName" value="' + esc(S.platform || '') + '" placeholder="例如 MyServer-2U"></label><button class="btn sm" type="button" id="btnGen">' + ic('file') + '從目前資料產生基準 JSON</button><button class="btn sm" type="button" id="btnApplyCfg">套用此 JSON</button><button class="btn sm" type="button" id="btnCopy">複製</button><button class="btn sm" type="button" id="btnSave" hidden>儲存為檔案</button></div>' + warnBase + '<textarea id="cfgText" spellcheck="false" placeholder="尚未載入設定檔。可貼上 JSON，或按「從目前資料產生基準 JSON」。">' + esc(S.cfgText) + '</textarea>' + msgs + '</div>' +
+  const sample = P.toToml({ schema:'pcie-topology-config/1', meta:{ platform:'MyServer-2U', description:'2 CPU / 8 GPU' }, expected_counts:{ cpu:2, gpu:8, pcie_switch:4, nic:4, nvme:8 }, link_rules:{ gpu:{ gen:5, width:16 }, nvme:{ gen:4, width:4 } }, cpus:[{ id:'CPU0', numa_nodes:[0], root_buses:['0000:15','0000:3a'] }, { id:'CPU1', numa_nodes:[1], root_buses:['0000:97','0000:ae'] }], devices:[{ name:'GPU0', role:'gpu', bdf:'0000:18:00.0', cpu:'CPU0', parent_bdf:'0000:17:00.0', vendor_id:'10de', device_id:'2331', link:{ gen:5, width:16 }, required:true }] });
+  return '<h2 class="sec">編輯 / 產生設定檔</h2><div class="cfgbox"><div class="ctrls"><label>機種名稱 <input type="text" id="platformName" value="' + esc(S.platform || '') + '" placeholder="例如 MyServer-2U"></label><button class="btn sm" type="button" id="btnGen">' + ic('file') + '從目前資料產生基準 TOML</button><button class="btn sm" type="button" id="btnApplyCfg">套用並比對</button><button class="btn sm" type="button" id="btnCopy">複製</button><button class="btn sm" type="button" id="btnSave" hidden>儲存為檔案</button></div>' + warnBase + '<textarea id="cfgText" spellcheck="false" placeholder="尚未載入設定檔。可貼上 TOML，或按「從目前資料產生基準 TOML」。">' + esc(S.cfgText) + '</textarea>' + msgs + (downloads ? '<div class="dim" style="font-size:12.5px">「儲存為檔案」的檔名會是 pcie-topology-config.toml.txt（這個頁面只能存 .txt 等固定副檔名），存好後把副檔名改成 .toml 即可。</div>' : '') + '</div>' +
     '<h2 class="sec">設定檔要包含什麼</h2><div class="tablewrap"><table class="schema"><thead><tr><th>欄位</th><th>型別</th><th>需求</th><th>說明</th></tr></thead><tbody>' + SCHEMA_ROWS.map((r) => '<tr><td>' + esc(r[0]) + '</td><td class="dim">' + r[1] + '</td><td>' + r[2] + '</td><td>' + esc(r[3]) + '</td></tr>').join('') + '</tbody></table></div>' +
     '<h2 class="sec">比對規則</h2><div class="box" style="padding:10px 14px"><ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px"><li>expected_counts 與實際數量不同 → 「數量不符」（少於預期為嚴重）。</li><li>devices[] 的 BDF 找不到 → 「缺少」；同類型、同 ID 的裝置出現在別的 BDF → 「BDF 變動」；設定檔沒列的 GPU / NIC / NVMe / Switch → 「多出裝置」。</li><li>實際 Link 低於 devices[].link 或 link_rules → 「低於設定檔」。即使沒有設定檔，也會比對 LnkCap 與 LnkSta 找出降速降寬。</li><li>cpus[] 的 root_buses / numa_nodes 決定裝置屬於哪顆 CPU；沒有時依 lspci 的 NUMA node 推算，再不行就依 Bus 編號推測並標示。</li></ul></div>' +
+    '<h2 class="sec">TOML 寫法提醒</h2><div class="box" style="padding:10px 14px"><ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px"><li><span class="mono"># </span>開頭是註解，可以放在行首或值的後面。</li><li>字串一定要加雙引號：<span class="mono">bdf = "0000:18:00.0"</span>；數字與 true / false 不加引號。</li><li>每個裝置一段 <span class="mono">[[devices]]</span>，複製貼上一段再改 BDF 就能新增；不需要的整段刪掉即可。</li><li>陣列可以拆成多行，最後一個元素後面可留逗號。</li><li>格式有誤時會指出第幾行；也可以直接載入舊的 .json 設定檔，會自動轉成 TOML。</li></ul></div>' +
     '<h2 class="sec">最小範例</h2><pre class="cmd">' + esc(sample) + '</pre>';
 }
 function genBaseline(){
   if (!hasData()) { toast('請先載入 lspci -vvv'); return; }
   const cfg = P.buildBaseline(model, an, { platform: S.platform || '' });
-  S.cfgText = JSON.stringify(cfg, null, 2); S.cfgMsg = P.validateConfig(cfg);
+  S.cfgText = P.toToml(cfg); S.cfgMsg = P.validateConfig(cfg);
   const ta = $('#cfgText'); if (ta) ta.value = S.cfgText;
-  render(); toast('已產生基準 JSON，可複製、儲存，或按「套用此 JSON」立即比對');
+  render(); toast('已產生基準 TOML，可編輯、複製、儲存，或按「套用並比對」');
 }
 let downloads = null;
 (async () => { try { downloads = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { downloads = null; } const b = $('#btnSave'); if (b && downloads) b.hidden = false; })();
@@ -1333,9 +1501,9 @@ function bindPanels(){
   if (ea) { ea.addEventListener('click', () => $$('.tnode').forEach((d) => { d.open = true; })); ca.addEventListener('click', () => $$('.tnode').forEach((d) => { d.open = false; })); }
   const pn = $('#platformName'); if (pn) pn.addEventListener('input', () => { S.platform = pn.value; });
   const g = $('#btnGen'); if (g) g.addEventListener('click', genBaseline);
-  const a = $('#btnApplyCfg'); if (a) a.addEventListener('click', () => { const t = $('#cfgText').value; if (!t.trim()) { toast('沒有內容'); return; } setSlot('cfg', t, '編輯中的 JSON'); });
+  const a = $('#btnApplyCfg'); if (a) a.addEventListener('click', () => { const t = $('#cfgText').value; if (!t.trim()) { toast('沒有內容'); return; } setSlot('cfg', t, '編輯中的 TOML'); });
   const cp = $('#btnCopy'); if (cp) cp.addEventListener('click', async () => { const ta = $('#cfgText'); try { await navigator.clipboard.writeText(ta.value); toast('已複製'); } catch (e) { ta.select(); toast('請按 Ctrl/Cmd+C 複製'); } });
-  const sv = $('#btnSave'); if (sv) { sv.hidden = !downloads; sv.addEventListener('click', async () => { const t = $('#cfgText').value; if (!t.trim()) { toast('沒有內容'); return; } try { await downloads.save({ filename: 'pcie-topology-config.json', data: t }); toast('已儲存'); } catch (e) { if (!e || e.code !== 'declined') toast('無法儲存，請改用複製'); } }); }
+  const sv = $('#btnSave'); if (sv) { sv.hidden = !downloads; sv.addEventListener('click', async () => { const t = $('#cfgText').value; if (!t.trim()) { toast('沒有內容'); return; } try { await downloads.save({ filename: 'pcie-topology-config.toml.txt', data: t }); toast('已儲存'); } catch (e) { if (!e || e.code !== 'declined') toast('無法儲存，請改用複製'); } }); }
 }
 
 /* ---------- 分頁 ---------- */
@@ -1346,7 +1514,7 @@ function setTab(t, silent){
   if (!silent) { try { localStorage.setItem('pcie-tab', t); } catch (e) {} }
 }
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
-try { const t = localStorage.getItem('pcie-tab'); if (t && $('#tabs [data-tab="' + t + '"]')) S.tab = t; } catch (e) {}
+try { let t = localStorage.getItem('pcie-tab'); if (t === 'json') t = 'config'; if (t && $('#tabs [data-tab="' + t + '"]')) S.tab = t; } catch (e) {}
 $$('#tabs button').forEach((b) => b.setAttribute('role', 'tab'));
 
 
@@ -1457,5 +1625,6 @@ loadSample();
 window.__pcie = { S, recompute, bdfSearch, setBdfQuery, setSlot, loadSample, render, get model(){ return model; }, get an(){ return an; } };
 })();
 </script>
+
 
 </body></html>
